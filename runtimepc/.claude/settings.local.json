@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\User\\\\Desktop\\\\Huawei\\\\pipeline\\\\offline\" -Recurse -Force)",
+      "Bash(Select-Object -Property FullName, PSIsContainer)",
+      "Bash(Sort-Object -Property FullName)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(cmake -S . -B build -G \"Visual Studio 17 2022\" -A x64)",
+      "Bash(cmake --build build --target ego_offline_mdf4)",
+      "Bash(cmake --build build --target test_mdf4_writer)"
+    ]
+  }
+}

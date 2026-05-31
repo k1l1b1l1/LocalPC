@@ -1,0 +1,71 @@
+# secrets
+**/s3.local.yaml
+*.credentials.yaml
+.env
+.env.*
+
+# build
+**/build/
+**/build2/
+**/build-*/
+**/build-arm/
+**/out/
+**/cmake-build-*/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/install_manifest.txt
+**/CTestTestfile.cmake
+**/Testing/
+**/_deps/
+compile_commands.json
+
+# msvc / vs
+**/.vs/
+**/*.sln
+**/*.vcxproj
+**/*.vcxproj.filters
+**/*.user
+**/*.suo
+**/x64/
+**/x86/
+**/Release/
+**/Debug/
+**/MinSizeRel/
+**/RelWithDebInfo/
+**/*.tlog/
+**/*.lastbuildstate
+**/*.recipe
+**/*.idb
+**/*.pdb
+**/*.ilk
+**/*.exp
+
+# binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.o
+*.obj
+
+# session / runtime data
+**/sessions/
+**/stand_data/
+**/e2e_test_data/
+**/e2e_file_test/
+/data/
+
+# temp
+s3_debug.txt
+*.log
+*.tmp
+*~
+
+# os / ide
+.DS_Store
+Thumbs.db
+desktop.ini
+.cursor/

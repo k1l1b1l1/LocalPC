@@ -1,0 +1,36 @@
+# Dev — local ego-contract TCP (micro/ego_device_server or SC589 simulator).
+
+network:
+  transport: ego_contract_tcp
+  ego_host: "127.0.0.1"
+  control_port: 5000
+  data_port: 5001
+  max_payload_bytes: 65536
+
+ipc:
+  port: 19002
+
+storage:
+  data_root: "./stand_data"
+  chunk_max_bytes: 1073741824
+  chunk_max_sec: 3600
+  flush_packets: 50
+  flush_interval_sec: 1
+  warn_free_gb: 2
+  critical_free_gb: 0.5
+
+session:
+  auto_start_on_session_started: true
+  vehicle_id: "PC-STAND-001"
+  test_stand_config: "pc-lab"
+
+diagnostics:
+  report_interval_sec: 5
+  time_gap_threshold_ms: 100
+
+offline:
+  enabled: true
+  binary: "../offline/build/ego-offline"
+  config: "../offline/config/stand.pc.yaml"
+  s3_config: "../offline/config/s3.local.yaml"
+  skip_s3: false

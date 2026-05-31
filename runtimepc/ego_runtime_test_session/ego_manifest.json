@@ -1,0 +1,12 @@
+{
+  "chunks": [
+    {
+      "chunk_id": 0,
+      "file": "ego_0.bin",
+      "bytes": 180,
+      "first_ts_ns": 1001,
+      "last_ts_ns": 1005,
+      "packet_count": 5
+    }
+  ]
+}

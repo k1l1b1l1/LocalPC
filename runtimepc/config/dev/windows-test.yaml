@@ -1,0 +1,29 @@
+# Dev — replay contract ego.bin from file.
+
+network:
+  transport: ego_contract_tcp
+  ego_host: "127.0.0.1"
+  control_port: 5000
+  data_port: 5001
+  max_payload_bytes: 65536
+
+ipc:
+  port: 19002
+
+storage:
+  data_root: "./e2e_test_data"
+  chunk_max_bytes: 4294967296
+  chunk_max_sec: 3600
+  flush_packets: 100
+  flush_interval_sec: 1
+  warn_free_gb: 1
+  critical_free_gb: 0.1
+
+session:
+  auto_start_on_session_started: false
+  vehicle_id: "WIN-TEST"
+  test_stand_config: "windows-lab"
+
+diagnostics:
+  report_interval_sec: 5
+  time_gap_threshold_ms: 50

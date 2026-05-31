@@ -1,0 +1,21 @@
+# Production — Raspberry Pi 5 (post-session offline + S3).
+# Install: sudo cp config/board.yaml /etc/ego-offline/config.yaml
+# Secrets: sudo cp config/s3.local.yaml /etc/ego-offline/s3.local.yaml (chmod 600)
+
+validation:
+  min_valid_duration_s: 10.0
+  fail_on_no_valid_ranges: true
+
+sync:
+  min_confidence: 0.7
+  fail_on_sync_error: false   # без source.bin sync пропускается
+
+mdf4:
+  include_audio: true
+  output_filename: session.mf4
+
+s3:
+  enabled: true
+  require_pipeline_success: false
+  require_real_mdf4: true
+  include_session_files: true   # ego_*.bin, manifest, metadata → S3 вместе с offline/

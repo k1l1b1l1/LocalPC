@@ -1,0 +1,46 @@
+# pipeline/offline/config/stand.pc.yaml
+# Конфигурация ego-offline для стенда ПК.
+# Ключевые отличия от defaults: короткие сессии (0.5 с), мягкий sync.
+#
+# Запуск: ego-offline validate --session-dir <dir> --config pipeline/offline/config/stand.pc.yaml
+#         ego-offline process  --session-dir <dir> --config pipeline/offline/config/stand.pc.yaml
+#
+# O-02 (TZ_pc_stand_system_integration v1.0)
+
+# Сетка временного выравнивания
+grid_dt_ms: 10
+join_tolerance_ms: 5
+telemetry_gap_ms: 200          # мягче: симуляция нестабильна по темпу
+audio_gap_factor: 2.0          # мягче: стенд без аппаратного таймера
+max_timestamp_jump_ms: 2000    # стенд: допустимы скачки до 2 с
+
+validation:
+  min_valid_duration_s: 0.5    # O-02: минимум для стенд-сессий (по умолчанию 10 с)
+  fail_on_no_valid_ranges: true
+
+sync:
+  min_confidence: 0.5          # мягче: короткие сессии дают низкий overlap
+  max_offset_search_s: 60.0
+  master_clock: ego
+  fail_on_sync_error: false    # O-05: не фейлить при отсутствии source.bin
+
+source_contract: v1
+
+mdf4:
+  include_audio: true
+  audio_preview_rms: false
+  output_filename: session.mf4
+
+scene:
+  segment_min_duration_ms: 200      # мягче для коротких стенд-тестов
+  classify_unknown_when_degraded: true
+
+debug:
+  keep_intermediate: false
+  intermediate_dir: stages
+
+# S3: upload offline/ автоматически после process (credentials — config/s3.local.yaml)
+s3:
+  enabled: true
+  require_pipeline_success: false
+  require_real_mdf4: true

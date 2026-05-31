@@ -1,0 +1,4 @@
+# Local S3 credentials — never commit
+config/s3.local.yaml
+**/s3.local.yaml
+*.credentials.yaml

@@ -17,7 +17,7 @@ MDF4 + отчёты + S3 из каталога сессии.
 ## Установка на Pi
 
 ```bash
-git clone <repo> ~/LocalPC
+git clone https://github.com/k1l1b1l1/LocalPC/tree/main ~/LocalPC
 cd ~/LocalPC
 
 sudo apt install -y cmake g++ curl openssl nlohmann-json3-dev

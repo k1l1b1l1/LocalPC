@@ -1,6 +1,7 @@
 #pragma once
 // ego-contract v1.3 frame format (must match ego-contract-main headers).
 
+#include <cstddef>
 #include <cstdint>
 
 namespace ego_offline::contract {

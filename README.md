@@ -38,7 +38,6 @@ cd ../offline
 cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
 ./install.sh
 # S3: положить config/s3.local.yaml и снова ./install.sh
-#     или скопировать в offline/etc/s3.local.yaml
 ```
 
 `install.sh` создаёт внутри каждого модуля:
@@ -47,7 +46,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
 |-----------|---------|
 | `bin/ego-runtime` | `bin/ego-offline` |
 | `etc/config.yaml` | `etc/config.yaml` |
-| `var/sessions/` | `etc/s3.local.yaml` (если есть secrets) |
+| `var/sessions/` | `etc/s3.local.yaml` |
 
 ---
 

@@ -77,4 +77,4 @@ sudo systemctl daemon-reload && sudo systemctl enable --now ego-runtime
 | `.../offline/` | MDF4 |
 | S3 | после stop, автоматически |
 
-Перед первым запуском отредактируй `runtimepc/etc/config.yaml` — `network.ego_host` (IP отправителя).
+Перед первым запуском требуется изменить `runtimepc/etc/config.yaml` — параметр `network.ego_host` (IP отправителя).

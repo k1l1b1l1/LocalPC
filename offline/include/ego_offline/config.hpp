@@ -61,7 +61,7 @@ struct Config {
         bool        require_real_mdf4       = true;
         int         max_retries             = 5;
         int         retry_backoff_ms        = 1000;
-        bool        include_session_files   = true;
+        bool        include_session_files   = false;  // TZ MVP: only offline/
         std::vector<std::string> include_files;
         std::vector<std::string> session_include_files;
     } s3;

@@ -13,6 +13,6 @@ s3:
   secret_key_env: "EGO_S3_SECRET_KEY"
   require_pipeline_success: false
   require_real_mdf4: true
-  include_session_files: true
+  include_session_files: false
   max_retries: 5
   retry_backoff_ms: 1000

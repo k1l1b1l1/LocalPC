@@ -46,6 +46,8 @@ private:
 
     std::string session_dir_;
     RuntimeConfig config_;
+    std::string chunk_path_;
+    std::string index_path_;
     std::ofstream chunk_stream_{};
     std::ofstream index_stream_{};
     std::uint32_t current_chunk_id_ = 0U;

@@ -9,10 +9,27 @@
 #include "ego_runtime/util.hpp"
 
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
 namespace ego_runtime {
+namespace {
+
+#if !defined(_WIN32)
+void FsyncPath(const std::string& path) {
+    if (path.empty()) {
+        return;
+    }
+    const int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd >= 0) {
+        fsync(fd);
+        ::close(fd);
+    }
+}
+#endif
+
+}  // namespace
 
 ChunkWriter::ChunkWriter(std::string session_dir, RuntimeConfig config)
     : session_dir_(std::move(session_dir)),
@@ -30,12 +47,14 @@ bool ChunkWriter::OpenChunk() {
     const std::string filename =
         "ego_" + std::to_string(current_chunk_id_) + ".bin";
     const std::string path = (std::filesystem::path(session_dir_) / filename).string();
+    chunk_path_ = path;
     chunk_stream_.open(path, std::ios::binary | std::ios::trunc);
     if (!chunk_stream_.good()) {
         return false;
     }
     if (!index_stream_.is_open()) {
         const std::string index_path = (std::filesystem::path(session_dir_) / "ego.index").string();
+        index_path_ = index_path;
         index_stream_.open(index_path, std::ios::app);
     }
     current_chunk_offset_ = 0U;
@@ -70,6 +89,7 @@ void ChunkWriter::AppendContractIndex(const std::uint32_t frame_type,
                                       const std::uint64_t t1_ns,
                                       const std::uint64_t offset,
                                       const std::uint32_t payload_size) {
+    (void)t1_ns;
     if (!index_stream_.good()) {
         return;
     }
@@ -129,7 +149,7 @@ void ChunkWriter::Flush(bool fsync_now) {
         chunk_stream_.flush();
 #if !defined(_WIN32)
         if (fsync_now) {
-            fsync(fileno(chunk_stream_.rdbuf()->file()));
+            FsyncPath(chunk_path_);
         }
 #endif
     }
@@ -137,7 +157,7 @@ void ChunkWriter::Flush(bool fsync_now) {
         index_stream_.flush();
 #if !defined(_WIN32)
         if (fsync_now) {
-            fsync(fileno(index_stream_.rdbuf()->file()));
+            FsyncPath(index_path_);
         }
 #endif
     }

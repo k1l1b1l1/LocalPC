@@ -1,5 +1,6 @@
 #include "ego_runtime/control_ipc.hpp"
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>

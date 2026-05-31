@@ -1,3 +1,8 @@
+# local install (install.sh)
+runtimepc/bin/
+runtimepc/var/sessions/
+offline/bin/
+
 # secrets
 **/s3.local.yaml
 *.credentials.yaml

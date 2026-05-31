@@ -1,7 +1,4 @@
-# Production — Raspberry Pi 5 + ADSP-SC589 (ego-contract-main v1.3).
-# Spec: TCP client on Pi → SC589 server Control :5000, Data :5001.
-#
-# Install: sudo cp config/board.yaml /etc/ego-runtime/config.yaml
+# Production — Raspberry Pi 5. Paths set by ./install.sh into etc/config.yaml
 
 network:
   transport: ego_contract_tcp
@@ -14,7 +11,7 @@ ipc:
   port: 19002
 
 storage:
-  data_root: "/data/ego-sessions"
+  data_root: "var/sessions"
   chunk_max_bytes: 4294967296
   chunk_max_sec: 3600
   flush_packets: 1000
@@ -36,7 +33,7 @@ diagnostics:
 # После stop/finalize сессии — автоматически запускает ego-offline process (+ S3).
 offline:
   enabled: true
-  binary: "/usr/local/bin/ego-offline"
-  config: "/etc/ego-offline/config.yaml"
-  s3_config: "/etc/ego-offline/s3.local.yaml"
+  binary: "../offline/bin/ego-offline"
+  config: "../offline/etc/config.yaml"
+  s3_config: "../offline/etc/s3.local.yaml"
   skip_s3: false

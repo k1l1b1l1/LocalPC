@@ -1,6 +1,4 @@
-# Production — Raspberry Pi 5 (post-session offline + S3).
-# Install: sudo cp config/board.yaml /etc/ego-offline/config.yaml
-# Secrets: sudo cp config/s3.local.yaml /etc/ego-offline/s3.local.yaml (chmod 600)
+# Production — Raspberry Pi 5. Config copied by ./install.sh → etc/config.yaml
 
 validation:
   min_valid_duration_s: 10.0

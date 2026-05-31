@@ -1,72 +1,80 @@
 # RPi5
 
-Два модуля для Raspberry Pi 5.
-
 ```
-SC589 / PC-симулятор  →  runtimepc  →  offline  →  S3
-     TCP :5001              запись         MDF4
+SC589 / PC  →  runtimepc  →  offline  →  S3
 ```
 
-## runtimepc (`ego-runtime`)
+## runtimepc
 
-Подключается к отправителю по TCP Data `:5001`, принимает EgoFrame, пишет сессию в `/data/ego-sessions/sessions/session-.../` (`ego_*.bin`, manifest, metadata).
+TCP-клиент `:5001`, пишет сессию в `runtimepc/var/sessions/`. После stop запускает offline.
 
-После stop сам запускает `ego-offline` в фоне.
+## offline
 
-## offline (`ego-offline`)
-
-Читает каталог сессии, строит `offline/session.mf4` и JSON-отчёты, загружает в S3 файлы сессии и `offline/`.
-
-## common / scripts
-
-`common/ego_v1/` — заголовки контракта для сборки runtimepc.  
-`scripts/sync_ego_contract.sh` — обновить их с ПК (на Pi не нужен).
+MDF4 + отчёты + S3 из каталога сессии.
 
 ---
 
-## Установка на Pi (один раз)
+## Установка на Pi
 
 ```bash
+git clone <repo> ~/LocalPC
+cd ~/LocalPC
+
 sudo apt install -y cmake g++ curl openssl nlohmann-json3-dev
+chmod +x runtimepc/install.sh offline/install.sh runtimepc/run.sh offline/run.sh scripts/install-pi.sh
 
-# runtime
-cd runtimepc && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
-sudo cp build/ego-runtime /usr/local/bin/
-sudo cp config/board.yaml /etc/ego-runtime/config.yaml
-sudo cp systemd/ego-runtime.service /etc/systemd/system/
-sudo mkdir -p /data/ego-sessions
-
-# offline
-cd ../offline && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
-sudo cp build/ego-offline /usr/local/bin/
-sudo cp config/board.yaml /etc/ego-offline/config.yaml
-
-# s3 credentials — отдельно, не из git (шаблон: offline/config/s3.yaml.example)
-sudo cp s3.local.yaml /etc/ego-offline/s3.local.yaml
-sudo chmod 600 /etc/ego-offline/s3.local.yaml
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now ego-runtime
+# оба модуля: сборка + install
+./scripts/install-pi.sh
 ```
 
-В `/etc/ego-runtime/config.yaml` укажи `network.ego_host` — IP SC589 или PC.
+Или по отдельности:
+
+```bash
+cd runtimepc
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
+./install.sh
+
+cd ../offline
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
+./install.sh
+# S3: положить config/s3.local.yaml и снова ./install.sh
+#     или скопировать в offline/etc/s3.local.yaml
+```
+
+`install.sh` создаёт внутри каждого модуля:
+
+| runtimepc | offline |
+|-----------|---------|
+| `bin/ego-runtime` | `bin/ego-offline` |
+| `etc/config.yaml` | `etc/config.yaml` |
+| `var/sessions/` | `etc/s3.local.yaml` (если есть secrets) |
 
 ---
 
 ## Запуск
 
 ```bash
-sudo systemctl start ego-runtime
-ego-runtime start          # начать запись
-ego-runtime stop           # стоп → offline → S3 автоматически
+cd ~/LocalPC/runtimepc
+./run.sh run &          # демон
+./run.sh start          # запись
+./run.sh stop           # стоп → offline → S3
 ```
 
-Данные:
+Autostart (опционально):
 
-| Где | Что |
-|-----|-----|
-| `/data/ego-sessions/sessions/session-.../` | сырой лог от runtime |
-| `.../offline/` | MDF4 и отчёты |
-| `s3://{bucket}/{prefix}/{session_id}/` | сессия + offline/ в облаке |
+```bash
+sudo cp var/ego-runtime.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now ego-runtime
+```
 
-Лог автозапуска offline: `{session_dir}/logs/offline_trigger.json`.
+---
+
+## Данные
+
+| Путь | Что |
+|------|-----|
+| `runtimepc/var/sessions/session-.../` | сырой лог |
+| `.../offline/` | MDF4 |
+| S3 | после stop, автоматически |
+
+Перед первым запуском отредактируй `runtimepc/etc/config.yaml` — `network.ego_host` (IP отправителя).

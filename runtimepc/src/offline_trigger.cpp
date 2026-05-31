@@ -134,35 +134,39 @@ OfflineTriggerResult TriggerOfflinePipeline(const RuntimeConfig& config,
                                             const std::string& session_dir) {
     OfflineTriggerResult result;
     const auto& hook = config.offline;
+    std::vector<std::string> argv;
+
+    auto finish = [&](const std::vector<std::string>& cmd) {
+        write_trigger_log(session_dir, result, cmd);
+        if (result.started) {
+            std::cerr << "[ego-runtime] offline pipeline started pid=" << result.pid
+                      << " session=" << session_dir << '\n';
+        } else if (!result.error.empty()) {
+            std::cerr << "[ego-runtime] offline pipeline failed: " << result.error << '\n';
+        }
+        return result;
+    };
 
     if (!hook.enabled) {
         result.error = "offline hook disabled";
-        return result;
+        return finish(argv);
     }
     if (session_dir.empty()) {
         result.error = "empty session_dir";
-        return result;
+        return finish(argv);
     }
     if (!file_exists(hook.binary)) {
         result.error = "ego-offline binary not found: " + hook.binary;
-        return result;
+        return finish(argv);
     }
     if (!hook.config_path.empty() && !file_exists(hook.config_path)) {
         result.error = "offline config not found: " + hook.config_path;
-        return result;
+        return finish(argv);
     }
 
-    const auto argv = build_argv(config, session_dir);
+    argv = build_argv(config, session_dir);
     result = spawn_detached(argv);
-    write_trigger_log(session_dir, result, argv);
-
-    if (result.started) {
-        std::cerr << "[ego-runtime] offline pipeline started pid=" << result.pid
-                  << " session=" << session_dir << '\n';
-    } else if (!result.error.empty()) {
-        std::cerr << "[ego-runtime] offline pipeline failed: " << result.error << '\n';
-    }
-    return result;
+    return finish(argv);
 }
 
 }  // namespace ego_runtime

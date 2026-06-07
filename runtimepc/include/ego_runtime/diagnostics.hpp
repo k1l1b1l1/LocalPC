@@ -15,6 +15,7 @@ struct RuntimeMetrics {
     std::uint64_t seq_gaps = 0U;
     std::uint64_t packets_lost = 0U;
     std::uint64_t out_of_order = 0U;
+    std::uint64_t packets_replayed = 0U;
     std::uint64_t time_gaps = 0U;
     std::uint64_t buffer_dropped = 0U;
     double write_mbps = 0.0;
@@ -48,6 +49,8 @@ public:
 
     void OnOutOfOrder() { ++out_of_order_; }
 
+    void OnPacketReplayed() { ++packets_replayed_; }
+
     void SetBufferDropped(std::uint64_t dropped) { buffer_dropped_.store(dropped); }
 
     void SetDiskFreeGb(double gb) { disk_free_gb_.store(gb); }
@@ -64,6 +67,7 @@ public:
         m.seq_gaps = seq_gaps_.load();
         m.packets_lost = packets_lost_.load();
         m.out_of_order = out_of_order_.load();
+        m.packets_replayed = packets_replayed_.load();
         m.time_gaps = time_gaps_.load();
         m.buffer_dropped = buffer_dropped_.load();
         m.disk_free_gb = disk_free_gb_.load();
@@ -86,6 +90,7 @@ private:
     std::atomic<std::uint64_t> seq_gaps_{0};
     std::atomic<std::uint64_t> packets_lost_{0};
     std::atomic<std::uint64_t> out_of_order_{0};
+    std::atomic<std::uint64_t> packets_replayed_{0};
     std::atomic<std::uint64_t> time_gaps_{0};
     std::atomic<std::uint64_t> buffer_dropped_{0};
     std::atomic<std::uint64_t> bytes_written_{0};

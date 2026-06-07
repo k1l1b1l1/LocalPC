@@ -32,7 +32,7 @@ void ParseScalar(const std::string& key, const std::string& value, RuntimeConfig
         cfg.transport = ParseTransportMode(Unquote(value));
     } else if (key == "network.ego_host") {
         cfg.ego_host = Unquote(value);
-    } else if (key == "network.control_port") {
+    } else if (key == "network.board_control_port" || key == "network.control_port") {
         cfg.board_control_port = static_cast<std::uint16_t>(std::stoul(value));
     } else if (key == "network.data_port") {
         cfg.data_port = static_cast<std::uint16_t>(std::stoul(value));

@@ -3,8 +3,8 @@
 network:
   transport: ego_contract_tcp
   ego_host: "192.168.10.50"   # IP ADSP-SC589 — заменить
-  control_port: 5000
-  data_port: 5001
+  board_control_port: 5000    # SC589 Control TCP (HELLO, START/STOP)
+  data_port: 5001             # SC589 Data TCP (EgoFrameHeader + payload)
   max_payload_bytes: 65536
 
 ipc:

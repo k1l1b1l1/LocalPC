@@ -5,6 +5,7 @@
 #include "ego_offline/protocol.hpp"
 #include "ego_offline/types.hpp"
 
+#include <string>
 #include <vector>
 #include <cstring>
 
@@ -41,6 +42,42 @@ struct DecodedEgoStreams {
         float acceleration_mps2  = 0.f;
     };
     std::vector<MotionSample> motion;
+
+    struct SessionEvent {
+        uint32_t frame_type = 0;
+        ns_t     ts_ns = 0;
+        std::string session_id;
+        std::string metadata_text;
+    };
+    std::vector<SessionEvent> session_events;
+    std::string config_snapshot_text;
+
+    struct CanRawFrame {
+        ns_t     ts_ns = 0;
+        uint32_t can_id = 0;
+        uint8_t  dlc = 0;
+        uint8_t  bus_id = 0;
+        uint8_t  data[8]{};
+    };
+    std::vector<CanRawFrame> can_raw;
+
+    struct TimeStatusSample {
+        ns_t  ts_ns = 0;
+        uint32_t time_source = 0;
+        uint32_t sync_status = 0;
+        float estimated_drift_ppm = 0.f;
+    };
+    std::vector<TimeStatusSample> time_status;
+
+    struct SystemStatusSample {
+        ns_t  ts_ns = 0;
+        uint32_t audio_status = 0;
+        uint32_t can_status = 0;
+        uint32_t imu_status = 0;
+        uint32_t gps_status = 0;
+        uint32_t dropped_frames = 0;
+    };
+    std::vector<SystemStatusSample> system_status;
 
     uint64_t session_frame_count = 0;
 };

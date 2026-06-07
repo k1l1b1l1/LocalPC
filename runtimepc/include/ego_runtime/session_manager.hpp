@@ -46,7 +46,9 @@ class SessionManager {
 public:
     explicit SessionManager(RuntimeConfig config);
 
-    RuntimeErrorCode Start(const ScenarioMetadata& scenario, const std::string& source_ip = "");
+    RuntimeErrorCode Start(const ScenarioMetadata& scenario,
+                           const std::string& source_ip = "",
+                           const std::string& session_id = "");
     RuntimeErrorCode Stop(const std::string& reason = "user_stop");
     RuntimeErrorCode EmergencyStop(const std::string& reason);
 

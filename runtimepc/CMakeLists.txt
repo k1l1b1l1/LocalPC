@@ -13,6 +13,11 @@ endif()
 
 option(EGO_RUNTIME_BUILD_TESTS "Build unit tests" ON)
 
+set(EGO_CONTRACT_PROTO_DIR "${CMAKE_SOURCE_DIR}/../../../ego-contract-main/generated/cpp" CACHE PATH
+    "pre-generated ego-contract protobuf C++ sources")
+
+find_package(Protobuf REQUIRED)
+
 find_package(Git QUIET)
 if(GIT_FOUND)
     execute_process(
@@ -31,9 +36,16 @@ target_include_directories(ego_protocol INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     "${EGO_V1_DIR}")
 
+file(GLOB EGO_PROTO_SOURCES CONFIGURE_DEPENDS
+    "${EGO_CONTRACT_PROTO_DIR}/ego/v1/*.pb.cc")
+add_library(ego_proto STATIC ${EGO_PROTO_SOURCES})
+target_include_directories(ego_proto PUBLIC "${EGO_CONTRACT_PROTO_DIR}")
+target_link_libraries(ego_proto PUBLIC protobuf::libprotobuf)
+
 add_library(ego_runtime_lib STATIC
     src/chunk_writer.cpp
     src/config.cpp
+    src/contract_control_client.cpp
     src/contract_frame_io.cpp
     src/contract_tcp_client.cpp
     src/control_ipc.cpp
@@ -47,7 +59,7 @@ add_library(ego_runtime_lib STATIC
     src/version.cpp
 )
 target_include_directories(ego_runtime_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(ego_runtime_lib PUBLIC ego_protocol)
+target_link_libraries(ego_runtime_lib PUBLIC ego_protocol ego_proto)
 target_compile_definitions(ego_runtime_lib PUBLIC EGO_RUNTIME_GIT_HASH="${EGO_RUNTIME_GIT_HASH}")
 
 if(WIN32)

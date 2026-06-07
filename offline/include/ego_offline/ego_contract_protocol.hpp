@@ -38,6 +38,7 @@ enum class FrameType : uint32_t {
     kCanRaw = 103,
     kTrajectory = 104,
     kGpsFix = 105,
+    kTimeStatus = 200,
     kSystemStatus = 201,
     kSessionEnded = 900,
 };

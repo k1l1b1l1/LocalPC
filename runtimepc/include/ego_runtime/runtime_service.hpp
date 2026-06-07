@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -8,6 +9,7 @@
 
 #include "ego_runtime/chunk_writer.hpp"
 #include "ego_runtime/config.hpp"
+#include "ego_runtime/contract_control_client.hpp"
 #include "ego_runtime/control_ipc.hpp"
 #include "ego_runtime/contract_tcp_client.hpp"
 #include "ego_runtime/diagnostics.hpp"
@@ -24,6 +26,7 @@ struct RuntimeStatus {
     SessionState session_state = SessionState::kIdle;
     RuntimeMetrics metrics{};
     std::string session_id;
+    std::string board_session_id;
     std::string session_dir;
 };
 
@@ -47,6 +50,13 @@ public:
     std::string BuildDiagnosticsText() const;
 
 private:
+    RuntimeErrorCode StartBoardSession(const ScenarioMetadata& scenario);
+    RuntimeErrorCode StartLocalRecording(const ScenarioMetadata& scenario);
+    RuntimeErrorCode StopBoardSession(const std::string& reason);
+    bool WaitForDataFrame(std::uint32_t frame_type, std::chrono::milliseconds timeout);
+    void ResetFrameWaitFlags();
+    bool EnsureDataClient();
+
     void OnContractFrame(ContractFrame frame);
     void WriterLoop();
     void ReportLoop();
@@ -64,6 +74,7 @@ private:
     std::unique_ptr<PacketBuffer> buffer_;
     std::unique_ptr<ChunkWriter> writer_;
     std::unique_ptr<ContractTcpClient> contract_client_;
+    std::unique_ptr<ContractControlClient> control_client_;
     std::unique_ptr<StorageMonitor> storage_;
     std::unique_ptr<ControlServer> control_server_;
     DiagnosticsCollector diagnostics_;
@@ -81,6 +92,12 @@ private:
     bool seen_ts_ = false;
     bool seq_initialized_ = false;
     std::uint64_t last_seq_ = 0U;
+    std::string board_session_id_;
+    std::mutex frame_wait_mu_{};
+    std::condition_variable frame_wait_cv_{};
+    bool session_started_seen_ = false;
+    bool config_snapshot_seen_ = false;
+    bool session_ended_seen_ = false;
 };
 
 }  // namespace ego_runtime

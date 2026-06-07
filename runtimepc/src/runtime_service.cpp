@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <iostream>
 #include <sstream>
 #include <thread>
 
@@ -41,6 +42,13 @@ double RuntimeService::RecordingDurationSec() const {
 }
 
 RuntimeErrorCode RuntimeService::StartRecording(const ScenarioMetadata& scenario) {
+    if (!config_.input_file.empty()) {
+        return StartLocalRecording(scenario);
+    }
+    return StartBoardSession(scenario);
+}
+
+RuntimeErrorCode RuntimeService::StartLocalRecording(const ScenarioMetadata& scenario) {
     std::lock_guard<std::recursive_mutex> lock(service_mu_);
     const RuntimeErrorCode rc = sessions_.Start(scenario);
     if (rc != RuntimeErrorCode::kOk) {
@@ -65,15 +73,160 @@ RuntimeErrorCode RuntimeService::StartRecording(const ScenarioMetadata& scenario
     return RuntimeErrorCode::kOk;
 }
 
-RuntimeErrorCode RuntimeService::StopRecording(const std::string& reason) {
+RuntimeErrorCode RuntimeService::StartBoardSession(const ScenarioMetadata& scenario) {
     std::lock_guard<std::recursive_mutex> lock(service_mu_);
-    if (finalize_in_progress_.load()) {
-        return RuntimeErrorCode::kOk;
+    if (sessions_.State() == SessionState::kRecording) {
+        return RuntimeErrorCode::kSessionBusy;
     }
-    const SessionState state = sessions_.State();
-    if (state != SessionState::kRecording && state != SessionState::kStopping) {
-        return RuntimeErrorCode::kNotRecording;
+
+    const std::string session_id = MakeSessionId();
+    control_client_ = std::make_unique<ContractControlClient>(config_);
+    if (!control_client_->Connect()) {
+        std::cerr << "control connect failed: " << control_client_->LastError() << "\n";
+        control_client_.reset();
+        return RuntimeErrorCode::kInternalError;
     }
+
+    const ControlHelloResult hello = control_client_->Hello("ego-runtime");
+    if (!hello.ok) {
+        std::cerr << "control hello failed: " << hello.error << "\n";
+        control_client_.reset();
+        return RuntimeErrorCode::kInternalError;
+    }
+
+    const ControlStartSessionResult start = control_client_->StartSession(scenario, session_id);
+    if (!start.ok) {
+        std::cerr << "start_session rejected: " << start.error << "\n";
+        control_client_.reset();
+        return RuntimeErrorCode::kInternalError;
+    }
+    board_session_id_ = start.session_id.empty() ? session_id : start.session_id;
+
+    ResetFrameWaitFlags();
+    const RuntimeErrorCode rc = sessions_.Start(scenario, "", board_session_id_);
+    if (rc != RuntimeErrorCode::kOk) {
+        control_client_.reset();
+        return rc;
+    }
+    const std::string dir = sessions_.SessionDir();
+    error_log_ = std::make_unique<ErrorLog>(dir + "/logs/runtime_error.log");
+    buffer_ = std::make_unique<PacketBuffer>(config_.packet_buffer_capacity, config_.packet_buffer_max_bytes);
+    writer_ = std::make_unique<ChunkWriter>(dir, config_);
+    if (!writer_->Open()) {
+        error_log_->Write(LogLevel::kError, "failed to open chunk writer");
+        sessions_.SetError("chunk_open_failed");
+        control_client_.reset();
+        return RuntimeErrorCode::kInternalError;
+    }
+    sessions_.WriteScenarioMetadata(scenario);
+    seen_ts_ = false;
+    last_ts_ns_ = 0U;
+    seq_initialized_ = false;
+    last_seq_ = 0U;
+    rate_start_ = std::chrono::steady_clock::now();
+    recording_start_ = rate_start_;
+
+    if (!EnsureDataClient()) {
+        error_log_->Write(LogLevel::kError, "data connect failed after control start");
+        sessions_.SetError("data_connect_failed");
+        writer_->Close();
+        writer_.reset();
+        buffer_.reset();
+        error_log_.reset();
+        sessions_.MarkStopped("data_connect_failed");
+        control_client_.reset();
+        return RuntimeErrorCode::kInternalError;
+    }
+
+    if (!WaitForDataFrame(static_cast<std::uint32_t>(FramePayloadType::SESSION_STARTED),
+                          std::chrono::seconds(5))) {
+        error_log_->Write(LogLevel::kWarning, "timeout waiting for SessionStarted frame");
+    }
+    if (!WaitForDataFrame(static_cast<std::uint32_t>(FramePayloadType::CONFIG_SNAPSHOT),
+                          std::chrono::seconds(5))) {
+        error_log_->Write(LogLevel::kWarning, "timeout waiting for ConfigSnapshot frame");
+    }
+
+    return RuntimeErrorCode::kOk;
+}
+
+bool RuntimeService::EnsureDataClient() {
+    if (config_.input_file.empty() && !contract_client_) {
+        contract_client_ = std::make_unique<ContractTcpClient>(
+            config_, [this](ContractFrame f) { OnContractFrame(std::move(f)); });
+    }
+    if (contract_client_ && !contract_client_->Running()) {
+        return contract_client_->Start();
+    }
+    return contract_client_ != nullptr && contract_client_->Running();
+}
+
+void RuntimeService::ResetFrameWaitFlags() {
+    std::lock_guard<std::mutex> lock(frame_wait_mu_);
+    session_started_seen_ = false;
+    config_snapshot_seen_ = false;
+    session_ended_seen_ = false;
+}
+
+bool RuntimeService::WaitForDataFrame(const std::uint32_t frame_type,
+                                      const std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(frame_wait_mu_);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto is_ready = [this, frame_type]() {
+        if (frame_type == static_cast<std::uint32_t>(FramePayloadType::SESSION_STARTED)) {
+            return session_started_seen_;
+        }
+        if (frame_type == static_cast<std::uint32_t>(FramePayloadType::CONFIG_SNAPSHOT)) {
+            return config_snapshot_seen_;
+        }
+        if (frame_type == static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED)) {
+            return session_ended_seen_;
+        }
+        return false;
+    };
+    return frame_wait_cv_.wait_until(lock, deadline, is_ready);
+}
+
+RuntimeErrorCode RuntimeService::StopRecording(const std::string& reason) {
+    return StopBoardSession(reason);
+}
+
+RuntimeErrorCode RuntimeService::StopBoardSession(const std::string& reason) {
+    std::string board_id;
+    {
+        std::lock_guard<std::recursive_mutex> lock(service_mu_);
+        if (finalize_in_progress_.load()) {
+            return RuntimeErrorCode::kOk;
+        }
+        const SessionState state = sessions_.State();
+        if (state != SessionState::kRecording && state != SessionState::kStopping) {
+            return RuntimeErrorCode::kNotRecording;
+        }
+        board_id = board_session_id_;
+    }
+
+    if (control_client_ && !board_id.empty()) {
+        const ControlStopSessionResult stop = control_client_->StopSession(board_id, reason);
+        if (!stop.ok && error_log_) {
+            error_log_->Write(LogLevel::kWarning, "control stop_session: " + stop.error);
+        }
+    }
+
+    if (contract_client_ && contract_client_->Running()) {
+        WaitForDataFrame(static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED), std::chrono::seconds(10));
+        if (!session_ended_seen_ && error_log_) {
+            error_log_->Write(LogLevel::kWarning, "timeout waiting for SessionEnded frame");
+        }
+    }
+
+    if (contract_client_) {
+        contract_client_->Stop();
+        contract_client_.reset();
+    }
+    control_client_.reset();
+
+    std::lock_guard<std::recursive_mutex> lock(service_mu_);
+    board_session_id_.clear();
     finalize_in_progress_ = true;
     sessions_.Stop(reason);
     if (!sync_file_mode_ && buffer_) {
@@ -102,15 +255,6 @@ bool RuntimeService::StartDaemon() {
     stop_threads_ = false;
     daemon_running_ = true;
     sync_file_mode_ = !config_.input_file.empty();
-
-    if (config_.input_file.empty()) {
-        contract_client_ = std::make_unique<ContractTcpClient>(
-            config_, [this](ContractFrame f) { OnContractFrame(std::move(f)); });
-        if (!contract_client_->Start()) {
-            daemon_running_ = false;
-            return false;
-        }
-    }
 
     storage_ = std::make_unique<StorageMonitor>(config_, [this](StorageLevel level, const StorageStatus& st) {
         diagnostics_.SetDiskFreeGb(st.free_gb);
@@ -154,6 +298,10 @@ void RuntimeService::StopDaemon() {
         control_server_.reset();
     }
     RemovePidFile(config_);
+    if (control_client_) {
+        control_client_->Disconnect();
+        control_client_.reset();
+    }
     if (contract_client_) {
         contract_client_->Stop();
         contract_client_.reset();
@@ -192,7 +340,6 @@ void RuntimeService::TrackContractSeq(const std::uint64_t seq) {
         return;
     }
     if (seq <= last_seq_) {
-        diagnostics_.OnOutOfOrder();
         return;
     }
     if (seq > last_seq_ + 1U) {
@@ -219,25 +366,41 @@ void RuntimeService::OnContractFrame(ContractFrame frame) {
         StartRecording(DefaultScenario());
     }
 
-    if (header.frame_type == static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED) &&
-        sessions_.State() == SessionState::kRecording) {
-        StopRecording("session_ended");
+    {
+        std::lock_guard<std::mutex> lock(frame_wait_mu_);
+        if (header.frame_type == static_cast<std::uint32_t>(FramePayloadType::SESSION_STARTED)) {
+            session_started_seen_ = true;
+        } else if (header.frame_type == static_cast<std::uint32_t>(FramePayloadType::CONFIG_SNAPSHOT)) {
+            config_snapshot_seen_ = true;
+        } else if (header.frame_type == static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED)) {
+            session_ended_seen_ = true;
+        }
+        frame_wait_cv_.notify_all();
+    }
+
+    if (header.frame_type == static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED)) {
         return;
     }
 
     diagnostics_.OnPacketReceived();
-    TrackContractSeq(header.seq);
 
-    if (seen_ts_) {
-        const std::uint64_t gap_ns = config_.time_gap_threshold_ms * 1'000'000ULL;
-        if (header.t0_ns > last_ts_ns_ && (header.t0_ns - last_ts_ns_) > gap_ns) {
-            diagnostics_.OnTimeGap();
+    bool is_replay = false;
+    if (seq_initialized_ && header.seq <= last_seq_) {
+        is_replay = true;
+        diagnostics_.OnPacketReplayed();
+    } else {
+        TrackContractSeq(header.seq);
+        if (seen_ts_) {
+            const std::uint64_t gap_ns = config_.time_gap_threshold_ms * 1'000'000ULL;
+            if (header.t0_ns > last_ts_ns_ && (header.t0_ns - last_ts_ns_) > gap_ns) {
+                diagnostics_.OnTimeGap();
+            }
         }
+        last_ts_ns_ = header.t0_ns;
+        seen_ts_ = true;
     }
-    last_ts_ns_ = header.t0_ns;
-    seen_ts_ = true;
 
-    if (sessions_.State() != SessionState::kRecording) {
+    if (sessions_.State() != SessionState::kRecording || is_replay) {
         return;
     }
 
@@ -340,6 +503,7 @@ void RuntimeService::WriteRuntimeReport() const {
     json << "  \"packet_loss\": " << m.packets_lost << ",\n";
     json << "  \"seq_gaps\": " << m.seq_gaps << ",\n";
     json << "  \"out_of_order\": " << m.out_of_order << ",\n";
+    json << "  \"packets_replayed\": " << m.packets_replayed << ",\n";
     json << "  \"time_gaps\": " << m.time_gaps << ",\n";
     json << "  \"buffer_dropped\": " << m.buffer_dropped << ",\n";
     json << "  \"disk_free_gb\": " << m.disk_free_gb << ",\n";
@@ -425,6 +589,7 @@ RuntimeStatus RuntimeService::Status() const {
         st.session_id = active->session_id;
         st.session_dir = active->storage_path;
     }
+    st.board_session_id = board_session_id_;
     return st;
 }
 
@@ -474,7 +639,9 @@ std::string RuntimeService::BuildDiagnosticsText() const {
     std::ostringstream out;
     out << "session_state=" << SessionStateToString(st.session_state) << "\n";
     out << "session_id=" << st.session_id << "\n";
+    out << "board_session_id=" << st.board_session_id << "\n";
     out << "ego_host=" << config_.ego_host << "\n";
+    out << "board_control_port=" << config_.board_control_port << "\n";
     out << "data_port=" << config_.data_port << "\n";
     out << "packets_received=" << st.metrics.packets_received << "\n";
     out << "packets_written=" << st.metrics.packets_written << "\n";

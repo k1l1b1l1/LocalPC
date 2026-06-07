@@ -64,15 +64,14 @@ bool RunDaemon(ego_runtime::RuntimeService& service, ego_runtime::RuntimeConfig&
         return false;
     }
 
-    const auto scenario = ScenarioFromConfig(config);
-    const auto rc = service.StartRecording(scenario);
-    if (rc != ego_runtime::RuntimeErrorCode::kOk) {
-        std::cerr << "start recording failed\n";
-        service.StopDaemon();
-        return false;
-    }
-
     if (!config.input_file.empty()) {
+        const auto scenario = ScenarioFromConfig(config);
+        const auto rc = service.StartRecording(scenario);
+        if (rc != ego_runtime::RuntimeErrorCode::kOk) {
+            std::cerr << "start recording failed\n";
+            service.StopDaemon();
+            return false;
+        }
         service.ProcessFileInput(config.input_file);
         service.StopRecording("file_eof");
         service.StopDaemon();

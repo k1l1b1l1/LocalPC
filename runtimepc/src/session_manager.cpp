@@ -52,14 +52,16 @@ void SessionManager::SetSourceIp(const std::string& ip) {
     }
 }
 
-RuntimeErrorCode SessionManager::Start(const ScenarioMetadata& scenario, const std::string& source_ip) {
+RuntimeErrorCode SessionManager::Start(const ScenarioMetadata& scenario,
+                                       const std::string& source_ip,
+                                       const std::string& session_id) {
     std::lock_guard<std::mutex> lock(mu_);
     if (active_ && active_->state == SessionState::kRecording) {
         return RuntimeErrorCode::kSessionBusy;
     }
     scenario_ = scenario;
     SessionInfo info{};
-    info.session_id = MakeSessionId();
+    info.session_id = session_id.empty() ? MakeSessionId() : session_id;
     info.started_at_utc = UtcNowIso8601();
     info.source_ip = source_ip;
     info.state = SessionState::kRecording;

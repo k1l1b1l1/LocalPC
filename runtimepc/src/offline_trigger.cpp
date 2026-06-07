@@ -5,6 +5,7 @@
 #include <iostream>
 #include <sstream>
 #include <vector>
+#include <cstdlib>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -23,20 +24,38 @@ bool file_exists(const std::string& path) {
     return !path.empty() && fs::is_regular_file(path);
 }
 
+std::string ResolveRuntimePath(const std::string& path) {
+    if (path.empty()) {
+        return path;
+    }
+    fs::path p(path);
+    if (p.is_absolute()) {
+        return path;
+    }
+    fs::path base = fs::current_path();
+    if (const char* root = std::getenv("EGO_RUNTIME_ROOT")) {
+        if (*root) {
+            base = fs::path(root);
+        }
+    }
+    return fs::weakly_canonical(base / p).string();
+}
+
 std::vector<std::string> build_argv(const RuntimeConfig& config, const std::string& session_dir) {
     const auto& hook = config.offline;
     std::vector<std::string> argv;
-    argv.push_back(hook.binary);
+    const std::string binary = ResolveRuntimePath(hook.binary);
+    argv.push_back(binary);
     argv.push_back("process");
     argv.push_back("--session-dir");
     argv.push_back(session_dir);
     if (!hook.config_path.empty()) {
         argv.push_back("--config");
-        argv.push_back(hook.config_path);
+        argv.push_back(ResolveRuntimePath(hook.config_path));
     }
-    if (!hook.skip_s3 && file_exists(hook.s3_config_path)) {
+    if (!hook.skip_s3 && file_exists(ResolveRuntimePath(hook.s3_config_path))) {
         argv.push_back("--s3-config");
-        argv.push_back(hook.s3_config_path);
+        argv.push_back(ResolveRuntimePath(hook.s3_config_path));
     } else if (hook.skip_s3) {
         argv.push_back("--skip-s3");
     }
@@ -155,13 +174,17 @@ OfflineTriggerResult TriggerOfflinePipeline(const RuntimeConfig& config,
         result.error = "empty session_dir";
         return finish(argv);
     }
-    if (!file_exists(hook.binary)) {
-        result.error = "ego-offline binary not found: " + hook.binary;
+    const std::string binary = ResolveRuntimePath(hook.binary);
+    if (!file_exists(binary)) {
+        result.error = "ego-offline binary not found: " + binary;
         return finish(argv);
     }
-    if (!hook.config_path.empty() && !file_exists(hook.config_path)) {
-        result.error = "offline config not found: " + hook.config_path;
-        return finish(argv);
+    if (!hook.config_path.empty()) {
+        const std::string cfg_path = ResolveRuntimePath(hook.config_path);
+        if (!file_exists(cfg_path)) {
+            result.error = "offline config not found: " + cfg_path;
+            return finish(argv);
+        }
     }
 
     argv = build_argv(config, session_dir);

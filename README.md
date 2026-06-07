@@ -56,8 +56,10 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
 cd ~/LocalPC/runtimepc
 ./run.sh run &          # демон
 ./run.sh start          # запись
-./run.sh stop           # стоп → offline → S3
+./run.sh stop           # стоп → finalize → offline (detached) → S3
 ```
+
+После `./run.sh stop` runtime **синхронно** завершает сессию и запускает `ego-offline process` на Pi; загрузка в S3 идёт в фоне на устройстве (GUI на PC не ждёт S3).
 
 Autostart (опционально):
 

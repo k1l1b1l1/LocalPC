@@ -205,17 +205,23 @@ RuntimeErrorCode RuntimeService::StopBoardSession(const std::string& reason) {
         board_id = board_session_id_;
     }
 
+    bool control_stop_ok = false;
     if (control_client_ && !board_id.empty()) {
         const ControlStopSessionResult stop = control_client_->StopSession(board_id, reason);
+        control_stop_ok = stop.ok;
         if (!stop.ok && error_log_) {
             error_log_->Write(LogLevel::kWarning, "control stop_session: " + stop.error);
         }
     }
 
     if (contract_client_ && contract_client_->Running()) {
-        WaitForDataFrame(static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED), std::chrono::seconds(10));
-        if (!session_ended_seen_ && error_log_) {
-            error_log_->Write(LogLevel::kWarning, "timeout waiting for SessionEnded frame");
+        // PC GUI may close ego TCP before Pi stop — don't block finalize on SESSION_ENDED.
+        const std::chrono::seconds ended_wait =
+            control_stop_ok ? std::chrono::seconds(3) : std::chrono::seconds(1);
+        if (!WaitForDataFrame(static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED), ended_wait)) {
+            if (error_log_) {
+                error_log_->Write(LogLevel::kWarning, "timeout waiting for SessionEnded frame");
+            }
         }
     }
 

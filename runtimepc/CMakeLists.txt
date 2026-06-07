@@ -15,7 +15,7 @@ option(EGO_RUNTIME_BUILD_TESTS "Build unit tests" ON)
 
 find_package(Protobuf REQUIRED)
 if(NOT Protobuf_PROTOC_EXECUTABLE)
-    message(FATAL_ERROR "protoc not found. Install protobuf-compiler (apt install protobuf-compiler).")
+    message(FATAL_ERROR "protoc not found. Install: sudo apt install -y protobuf-compiler")
 endif()
 
 find_package(Git QUIET)
@@ -39,35 +39,31 @@ target_include_directories(ego_protocol INTERFACE
 # Vendored .proto from ego-contract v1.3; generated at build time with system protoc.
 set(EGO_PROTO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ego-contract/proto")
 set(EGO_PROTO_FILES
-    ego/v1/ego_common.proto
-    ego/v1/ego_config.proto
-    ego/v1/ego_control.proto
-    ego/v1/ego_data.proto
+    "${EGO_PROTO_ROOT}/ego/v1/ego_common.proto"
+    "${EGO_PROTO_ROOT}/ego/v1/ego_config.proto"
+    "${EGO_PROTO_ROOT}/ego/v1/ego_control.proto"
+    "${EGO_PROTO_ROOT}/ego/v1/ego_data.proto"
 )
-set(EGO_PROTO_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-file(MAKE_DIRECTORY "${EGO_PROTO_GEN_DIR}/ego/v1")
 
-set(EGO_PROTO_SRCS "")
-set(EGO_PROTO_HDRS "")
-foreach(_rel IN LISTS EGO_PROTO_FILES)
-    get_filename_component(_name "${_rel}" NAME_WE)
-    get_filename_component(_dir "${_rel}" DIRECTORY)
-    set(_src "${EGO_PROTO_GEN_DIR}/${_dir}/${_name}.pb.cc")
-    set(_hdr "${EGO_PROTO_GEN_DIR}/${_dir}/${_name}.pb.h")
-    list(APPEND EGO_PROTO_SRCS "${_src}")
-    list(APPEND EGO_PROTO_HDRS "${_hdr}")
-    add_custom_command(
-        OUTPUT "${_src}" "${_hdr}"
-        COMMAND ${Protobuf_PROTOC_EXECUTABLE}
-        ARGS --cpp_out="${EGO_PROTO_GEN_DIR}" -I "${EGO_PROTO_ROOT}" "${EGO_PROTO_ROOT}/${_rel}"
-        DEPENDS "${EGO_PROTO_ROOT}/${_rel}"
-        COMMENT "Generating ${_rel}"
-        VERBATIM
-    )
+foreach(_proto IN LISTS EGO_PROTO_FILES)
+    if(NOT EXISTS "${_proto}")
+        message(FATAL_ERROR
+            "Missing ${_proto}. Run: git pull origin contract-v1.3")
+    endif()
 endforeach()
 
-add_library(ego_proto STATIC ${EGO_PROTO_SRCS})
-target_include_directories(ego_proto PUBLIC "${EGO_PROTO_GEN_DIR}")
+set(PROTOBUF_IMPORT_DIRS "${EGO_PROTO_ROOT}")
+set(PROTOBUF_GENERATE_CPP_APPEND_PATH OFF)
+protobuf_generate_cpp(EGO_PROTO_SRCS EGO_PROTO_HDRS ${EGO_PROTO_FILES})
+
+if(NOT EGO_PROTO_SRCS)
+    message(FATAL_ERROR
+        "protobuf_generate_cpp produced no sources. "
+        "Install protobuf-compiler and re-run cmake.")
+endif()
+
+add_library(ego_proto STATIC ${EGO_PROTO_SRCS} ${EGO_PROTO_HDRS})
+target_include_directories(ego_proto PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(ego_proto PUBLIC protobuf::libprotobuf)
 
 add_library(ego_runtime_lib STATIC

@@ -22,6 +22,9 @@ if [[ ! -x "$ROOT/build/ego-runtime" ]]; then
   exit 1
 fi
 
+pkill -f '[/]bin/ego-runtime' 2>/dev/null || true
+sleep 0.3
+
 cp "$ROOT/build/ego-runtime" "$BIN/ego-runtime"
 chmod +x "$BIN/ego-runtime"
 

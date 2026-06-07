@@ -13,10 +13,10 @@ endif()
 
 option(EGO_RUNTIME_BUILD_TESTS "Build unit tests" ON)
 
-set(EGO_CONTRACT_PROTO_DIR "${CMAKE_SOURCE_DIR}/../../../ego-contract-main/generated/cpp" CACHE PATH
-    "pre-generated ego-contract protobuf C++ sources")
-
 find_package(Protobuf REQUIRED)
+if(NOT Protobuf_PROTOC_EXECUTABLE)
+    message(FATAL_ERROR "protoc not found. Install protobuf-compiler (apt install protobuf-compiler).")
+endif()
 
 find_package(Git QUIET)
 if(GIT_FOUND)
@@ -36,10 +36,38 @@ target_include_directories(ego_protocol INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     "${EGO_V1_DIR}")
 
-file(GLOB EGO_PROTO_SOURCES CONFIGURE_DEPENDS
-    "${EGO_CONTRACT_PROTO_DIR}/ego/v1/*.pb.cc")
-add_library(ego_proto STATIC ${EGO_PROTO_SOURCES})
-target_include_directories(ego_proto PUBLIC "${EGO_CONTRACT_PROTO_DIR}")
+# Vendored .proto from ego-contract v1.3; generated at build time with system protoc.
+set(EGO_PROTO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ego-contract/proto")
+set(EGO_PROTO_FILES
+    ego/v1/ego_common.proto
+    ego/v1/ego_config.proto
+    ego/v1/ego_control.proto
+    ego/v1/ego_data.proto
+)
+set(EGO_PROTO_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${EGO_PROTO_GEN_DIR}/ego/v1")
+
+set(EGO_PROTO_SRCS "")
+set(EGO_PROTO_HDRS "")
+foreach(_rel IN LISTS EGO_PROTO_FILES)
+    get_filename_component(_name "${_rel}" NAME_WE)
+    get_filename_component(_dir "${_rel}" DIRECTORY)
+    set(_src "${EGO_PROTO_GEN_DIR}/${_dir}/${_name}.pb.cc")
+    set(_hdr "${EGO_PROTO_GEN_DIR}/${_dir}/${_name}.pb.h")
+    list(APPEND EGO_PROTO_SRCS "${_src}")
+    list(APPEND EGO_PROTO_HDRS "${_hdr}")
+    add_custom_command(
+        OUTPUT "${_src}" "${_hdr}"
+        COMMAND ${Protobuf_PROTOC_EXECUTABLE}
+        ARGS --cpp_out="${EGO_PROTO_GEN_DIR}" -I "${EGO_PROTO_ROOT}" "${EGO_PROTO_ROOT}/${_rel}"
+        DEPENDS "${EGO_PROTO_ROOT}/${_rel}"
+        COMMENT "Generating ${_rel}"
+        VERBATIM
+    )
+endforeach()
+
+add_library(ego_proto STATIC ${EGO_PROTO_SRCS})
+target_include_directories(ego_proto PUBLIC "${EGO_PROTO_GEN_DIR}")
 target_link_libraries(ego_proto PUBLIC protobuf::libprotobuf)
 
 add_library(ego_runtime_lib STATIC

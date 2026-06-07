@@ -1,0 +1,163 @@
+syntax = "proto3";
+
+package ego.v1;
+
+import "ego/v1/ego_common.proto";
+import "ego/v1/ego_config.proto";
+
+// Length-prefixed protobuf request/response protocol for Control TCP.
+
+message SessionMetadata {
+  string session_id = 1;
+  string test_id = 2;
+  string test_description = 3;
+  string scenario_id = 4;
+  string scenario_name = 5;
+  string operator_name = 6;
+  string project = 7;
+  string vehicle_id = 8;
+  string source_id = 9;
+  repeated KeyValue tags = 20;
+  repeated CanValueDescription can_value_descriptions = 21;
+}
+
+message HelloRequest {
+  string client_name = 1;
+  string client_version = 2;
+  uint32 protocol_version = 3;
+}
+
+message HelloResponse {
+  ResultCode result = 1;
+  ErrorInfo error = 2;
+  DeviceIdentity device = 3;
+  ConfigInventory config_inventory = 4;
+}
+
+message GetStatusRequest {}
+
+message DeviceStatus {
+  fixed64 t_ns = 1;
+  bool session_active = 2;
+  bool data_stream_active = 3;
+  string active_session_id = 4;
+
+  uint64 tx_frames = 10;
+  uint64 tx_bytes = 11;
+
+  uint32 audio_status = 20;
+  uint32 can_status = 21;
+  uint32 imu_status = 22;
+  uint32 gps_status = 23;
+  uint32 network_status = 24;
+
+  ConfigInventory config_inventory = 30;
+  repeated string warnings = 40;
+}
+
+message GetConfigInventoryRequest {}
+
+message GetConfigSnapshotRequest {
+  repeated ConfigType types = 1; // empty = all
+}
+
+message UpdateConfigRequest {
+  DeviceConfigUpdate update = 1;
+  bool validate_only = 2;
+  bool save_to_sd = 3; // recommended true
+}
+
+message UpdateConfigResponse {
+  ResultCode result = 1;
+  ErrorInfo error = 2;
+  ConfigInventory config_inventory = 3;
+}
+
+message SaveConfigRequest {
+  repeated ConfigType types = 1; // empty = all current configs
+}
+
+message RestoreDefaultConfigRequest {
+  repeated ConfigType types = 1; // empty = all defaults
+  bool save_to_sd = 2;
+}
+
+message StartSessionRequest {
+  // Only session/test metadata is sent here.
+  // Audio/IMU/CAN/GPS/vehicle configs must already be stored on the device.
+  SessionMetadata session = 1;
+
+  bool start_data_stream = 2;
+
+  // Recommended true: device emits SessionStarted + ConfigSnapshotFrame
+  // to Data TCP before realtime frames, so ego.bin is self-contained.
+  bool emit_config_snapshot_to_data_stream = 3;
+
+  // Recommended true: reject start if a required config is missing or invalid.
+  bool require_valid_saved_configs = 4;
+}
+
+message StartSessionResponse {
+  ResultCode result = 1;
+  ErrorInfo error = 2;
+  string session_id = 3;
+  ConfigInventory config_inventory = 4;
+  DeviceConfigSnapshot effective_config = 5;
+}
+
+message StopSessionRequest {
+  string session_id = 1;
+  string reason = 2;
+}
+
+message StopSessionResponse {
+  ResultCode result = 1;
+  ErrorInfo error = 2;
+  string session_id = 3;
+}
+
+message MarkerRequest {
+  string session_id = 1;
+  string marker_id = 2;
+  string description = 3;
+  repeated KeyValue tags = 4;
+}
+
+message MarkerResponse {
+  ResultCode result = 1;
+  ErrorInfo error = 2;
+}
+
+message ControlRequest {
+  fixed64 request_id = 1;
+
+  oneof request {
+    HelloRequest hello = 10;
+    GetStatusRequest get_status = 11;
+    GetConfigInventoryRequest get_config_inventory = 12;
+    GetConfigSnapshotRequest get_config_snapshot = 13;
+    UpdateConfigRequest update_config = 14;
+    SaveConfigRequest save_config = 15;
+    RestoreDefaultConfigRequest restore_default_config = 16;
+    StartSessionRequest start_session = 17;
+    StopSessionRequest stop_session = 18;
+    MarkerRequest marker = 19;
+  }
+}
+
+message ControlResponse {
+  fixed64 request_id = 1;
+
+  oneof response {
+    HelloResponse hello = 10;
+    DeviceStatus status = 11;
+    ConfigInventory config_inventory = 12;
+    DeviceConfigSnapshot config_snapshot = 13;
+    UpdateConfigResponse update_config = 14;
+    UpdateConfigResponse save_config = 15;
+    UpdateConfigResponse restore_default_config = 16;
+    StartSessionResponse start_session = 17;
+    StopSessionResponse stop_session = 18;
+    MarkerResponse marker = 19;
+  }
+}

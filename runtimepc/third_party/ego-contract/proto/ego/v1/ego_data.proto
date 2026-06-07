@@ -1,0 +1,197 @@
+syntax = "proto3";
+
+package ego.v1;
+
+import "ego/v1/ego_common.proto";
+import "ego/v1/ego_config.proto";
+import "ego/v1/ego_control.proto";
+
+// Data TCP payload schemas.
+// Each payload is wrapped by fixed binary EgoFrameHeader in the transport.
+
+message SessionStarted {
+  fixed64 t_ns = 1;
+  SessionMetadata session = 2;
+  ConfigInventory config_inventory = 3;
+}
+
+message ConfigSnapshotFrame {
+  fixed64 t_ns = 1;
+  DeviceConfigSnapshot snapshot = 2;
+}
+
+message AudioBlock {
+  fixed64 audio_block_id = 1;
+  TimeRangeNs time = 2;
+
+  uint32 sample_rate_hz = 3;
+  uint32 channels_count = 4;
+  uint32 bytes_per_sample = 5;
+  uint32 frames_count = 6;
+  AudioLayout layout = 7;
+
+  // Prototype/simple mode. Production mode may use raw PCM payload after
+  // a compact binary block header instead of protobuf bytes field.
+  bytes pcm_data = 8;
+}
+
+message ImuWindow {
+  fixed64 window_id = 1;
+  TimeRangeNs time = 2;
+  uint32 sample_count = 3;
+  uint32 flags = 4;
+
+  float accel_mean_x_mps2 = 5;
+  float accel_mean_y_mps2 = 6;
+  float accel_mean_z_mps2 = 7;
+
+  float gyro_mean_x_rad_s = 8;
+  float gyro_mean_y_rad_s = 9;
+  float gyro_mean_z_rad_s = 10;
+
+  float delta_velocity_x_mps = 11;
+  float delta_velocity_y_mps = 12;
+  float delta_velocity_z_mps = 13;
+
+  float delta_angle_x_rad = 14;
+  float delta_angle_y_rad = 15;
+  float delta_angle_z_rad = 16;
+}
+
+message CanDecodedValue {
+  fixed64 t_ns = 1;
+  uint32 value_id = 2;
+  uint32 can_id = 3;
+  float value = 4;
+  reserved 5, 6, 7;
+}
+
+message CanRawFrame {
+  fixed64 t_ns = 1;
+  uint32 can_id = 2;
+  uint32 dlc = 3;
+  bool is_extended = 4;
+  uint32 bus_id = 5;
+  uint32 flags = 6;
+  bytes data = 7; // expected length <= 8 for CAN 2.0
+}
+
+message TrajectoryPoint {
+  fixed64 t_ns = 1;
+
+  float x_m = 2;
+  float y_m = 3;
+  float z_m = 4;
+
+  reserved 5, 6, 7;
+
+  float yaw_rad = 8;
+  float pitch_rad = 9;
+  float roll_rad = 10;
+
+  float yaw_rate_rad_s = 11;
+  float path_s_m = 12;
+  float vehicle_speed_mps = 13;
+
+  uint32 flags = 14;
+}
+
+message GpsFix {
+  fixed64 t_ns = 1;
+
+  double lat_deg = 2;
+  double lon_deg = 3;
+  double alt_m = 4;
+
+  float speed_mps = 5;
+  float heading_rad = 6;
+  float h_acc_m = 7;
+  float v_acc_m = 8;
+
+  GpsFixType fix_type = 9;
+  uint32 satellites = 10;
+  uint32 rtk_status = 11;
+  uint32 flags = 12;
+}
+
+message TimeStatus {
+  fixed64 t_ns = 1;
+  fixed64 monotonic_ns = 2;
+  sfixed64 utc_offset_ns = 3;
+
+  TimeSource time_source = 4;
+  uint32 sync_status = 5;
+  float estimated_drift_ppm = 6;
+  float sync_error_us = 7;
+}
+
+message SystemStatus {
+  fixed64 t_ns = 1;
+
+  uint32 audio_status = 2;
+  uint32 can_status = 3;
+  uint32 imu_status = 4;
+  uint32 gps_status = 5;
+  uint32 network_status = 6;
+
+  uint32 audio_overruns = 10;
+  uint32 imu_fifo_overruns = 11;
+  uint32 can_rx_errors = 12;
+  uint32 dropped_frames = 13;
+
+  float cpu_load_arm = 20;
+  float cpu_load_sharc0 = 21;
+  float cpu_load_sharc1 = 22;
+}
+
+message ImuCalibrationEvent {
+  fixed64 t_ns = 1;
+
+  float gyro_bias_x_rad_s = 2;
+  float gyro_bias_y_rad_s = 3;
+  float gyro_bias_z_rad_s = 4;
+
+  float accel_ref_x_mps2 = 5;
+  float accel_ref_y_mps2 = 6;
+  float accel_ref_z_mps2 = 7;
+
+  float collect_time_s = 8;
+  uint32 sample_count = 9;
+  uint32 quality_flags = 10;
+}
+
+message MarkerEvent {
+  fixed64 t_ns = 1;
+  string marker_id = 2;
+  string description = 3;
+  repeated KeyValue tags = 4;
+}
+
+message SessionEnded {
+  fixed64 t_ns = 1;
+  string session_id = 2;
+  string reason = 3;
+  uint64 total_frames = 4;
+  uint64 total_bytes = 5;
+}
+
+message DataPayload {
+  oneof payload {
+    SessionStarted session_started = 1;
+    ConfigSnapshotFrame config_snapshot = 2;
+
+    AudioBlock audio_block = 100;
+    ImuWindow imu_window = 101;
+    CanDecodedValue can_decoded_value = 102;
+    CanRawFrame can_raw_frame = 103;
+    TrajectoryPoint trajectory_point = 104;
+    GpsFix gps_fix = 105;
+
+    TimeStatus time_status = 200;
+    SystemStatus system_status = 201;
+    ImuCalibrationEvent imu_calib_event = 202;
+    MarkerEvent marker_event = 203;
+
+    SessionEnded session_ended = 900;
+  }
+}

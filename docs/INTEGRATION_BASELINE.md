@@ -41,14 +41,12 @@
 
 ## Protobuf C++ (runtimepc)
 
-Сгенерированные файлы: `ego-contract-main/generated/cpp/`  
-Сборка: `find_package(Protobuf)` в `runtimepc/CMakeLists.txt`  
-На Pi: `sudo apt install libprotobuf-dev`
-
-Перегенерация:
+Vendored proto: `runtimepc/third_party/ego-contract/proto/ego/v1/*.proto`  
+Сборка: `protoc` генерирует `.pb.cc` в `build/generated/` (CMake custom command)  
+На Pi:
 
 ```bash
-cd ego-contract-main && ./scripts/gen_cpp.sh
+sudo apt install -y libprotobuf-dev protobuf-compiler
 ```
 
 ## Жизненный цикл сессии (Pi)

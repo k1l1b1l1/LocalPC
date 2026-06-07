@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package ego.v1;
+
+import "ego/v1/ego_common.proto";
+
+// Persistent device configuration.
+// Configs are uploaded before session start and saved on the ADSP-SC589 SD card.
+
+message AudioChannelConfig {
+  uint32 channel_index = 1;
+  string name = 2;
+  string sensor_id = 3;
+  Pose3f mount_pose = 4;
+  uint32 a2b_node = 5;
+  uint32 a2b_slot = 6;
+}
+
+message AudioConfig {
+  bool enabled = 1;
+  uint32 sample_rate_hz = 2;
+  SampleFormat sample_format = 3;
+  uint32 valid_bits = 4;
+  AudioLayout layout = 5;
+  uint32 block_frames = 6;
+  uint32 channels_count = 7;
+  repeated AudioChannelConfig channels = 8;
+}
+
+message ImuConfig {
+  bool enabled = 1;
+  string sensor = 2;            // LSM6DS3
+  string interface_name = 3;    // SPI
+  string read_mode = 4;         // FIFO_DMA
+  uint32 raw_odr_hz = 5;
+  uint32 window_us = 6;
+  float accel_range_g = 7;
+  float gyro_range_dps = 8;
+  Pose3f mount_pose = 9;
+  string axis_mapping = 10;     // e.g. +X,+Y,+Z
+}
+
+message CanSignalConfig {
+  string name = 1;
+  uint32 value_id = 2;
+  uint32 can_id = 3;
+  bool is_extended = 4;
+  uint32 start_bit = 5;
+  uint32 bit_length = 6;
+  ByteOrder byte_order = 7;
+  bool is_unsigned = 8;
+  float scale = 9;
+  float offset = 10;
+  string unit = 11;
+  CanSignalRole role = 12;
+}
+
+message CanConfig {
+  bool enabled = 1;
+  string bus_name = 2;
+  uint32 bitrate = 3;
+  repeated CanSignalConfig signals = 4;
+  bool save_raw_frames = 5;
+  optional string dbc_text = 6;
+}
+
+message GpsConfig {
+  bool enabled = 1;
+  string source = 2;            // usb, lan
+  string protocol = 3;          // nmea, ubx, custom
+  uint32 expected_rate_hz = 4;
+  bool rtk_supported = 5;
+  string endpoint = 6;          // optional LAN endpoint or device hint
+}
+
+message VehicleGeometryConfig {
+  string vehicle_id = 1;
+  float wheelbase_m = 2;
+  float track_front_m = 3;
+  float track_rear_m = 4;
+
+  Pose3f vehicle_origin_pose = 10;
+  Pose3f mic_array_origin_pose = 11;
+  Pose3f gps_antenna_pose = 12;
+}
+
+message TimeConfig {
+  string time_base = 1;         // adsp_monotonic_counter
+  string utc_source = 2;        // gps, host, none
+  bool emit_time_status = 3;
+}
+
+message NetworkConfig {
+  string control_bind_address = 1;
+  uint32 control_port = 2;
+  string data_bind_address = 3;
+  uint32 data_port = 4;
+}
+
+// Partial config update. Only provided fields are validated and optionally saved.
+message DeviceConfigUpdate {
+  optional AudioConfig audio = 1;
+  optional ImuConfig imu = 2;
+  optional CanConfig can = 3;
+  optional GpsConfig gps = 4;
+  optional VehicleGeometryConfig vehicle = 5;
+  optional TimeConfig time = 6;
+  optional NetworkConfig network = 7;
+}
+
+// Full effective config snapshot emitted to the data stream at session start.
+message DeviceConfigSnapshot {
+  ConfigInventory inventory = 1;
+  AudioConfig audio = 2;
+  ImuConfig imu = 3;
+  CanConfig can = 4;
+  GpsConfig gps = 5;
+  VehicleGeometryConfig vehicle = 6;
+  TimeConfig time = 7;
+  NetworkConfig network = 8;
+}

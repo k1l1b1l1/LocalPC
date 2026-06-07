@@ -45,7 +45,6 @@ struct ImuWindowPacket {
 struct TrajectoryPointPacket {
     uint64_t t_ns;
     float x_m, y_m, z_m;
-    float vx_mps, vy_mps, vz_mps;
     float yaw_rad, pitch_rad, roll_rad;
     float yaw_rate_rad_s;
     float path_s_m;
@@ -110,8 +109,8 @@ bool ContractDemuxer::demux(const contract::EgoFrameHeader& header,
             TrajectoryPoint tp;
             tp.ts_ns = raw.t_ns;
             tp.yaw_deg = raw.yaw_rad * 180.f / 3.14159265f;
-            tp.vel_n_mps = raw.vx_mps;
-            tp.vel_e_mps = raw.vy_mps;
+            tp.vel_n_mps = raw.vehicle_speed_mps * std::cos(raw.yaw_rad);
+            tp.vel_e_mps = raw.vehicle_speed_mps * std::sin(raw.yaw_rad);
             out.trajectory.push_back(tp);
             DecodedEgoStreams::MotionSample m;
             m.ts_ns = raw.t_ns;

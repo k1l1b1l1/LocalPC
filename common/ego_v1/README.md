@@ -1,6 +1,6 @@
 # ego-contract v1 (vendored)
 
-Canonical spec: `Huawei/ego-contract-main` (README, `docs/FRAME_CONTRACT.md`).
+Canonical spec: `Huawei/ego-contract-main` (v1.3, synced from `updated_contract`; see `docs/FRAME_CONTRACT.md`).
 
 This directory is copied into `rpi5` for self-contained deploy on Raspberry Pi 5.
 

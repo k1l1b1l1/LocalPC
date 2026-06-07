@@ -9,6 +9,27 @@ namespace ego::protocol::v1 {
 static constexpr uint32_t EGO_FRAME_MAGIC = 0x314F4745u; // 'EGO1' little-endian
 static constexpr uint16_t EGO_PROTOCOL_VERSION = 2u;
 static constexpr uint16_t EGO_FRAME_HEADER_SIZE = 72u;
+static constexpr uint32_t EGO_CONFIG_SNAPSHOT_MAGIC = 0x31474643u; // 'CFG1' little-endian
+static constexpr uint16_t EGO_CONFIG_SNAPSHOT_FORMAT_VERSION = 1u;
+static constexpr uint32_t EGO_CONFIG_SNAPSHOT_FORMAT_TEXT_KV = 1u;
+static constexpr uint32_t EGO_CONFIG_SNAPSHOT_FLAG_SD_LOADED = 1u << 0;
+static constexpr uint32_t EGO_CONFIG_SNAPSHOT_FLAG_DIRTY = 1u << 1;
+static constexpr uint32_t EGO_SESSION_EVENT_MAGIC = 0x31534553u; // 'SES1' little-endian
+static constexpr uint16_t EGO_SESSION_EVENT_FORMAT_VERSION = 1u;
+static constexpr uint32_t EGO_SESSION_EVENT_FLAG_STORAGE_REQUESTED = 1u << 0;
+static constexpr uint32_t EGO_SESSION_EVENT_FLAG_STORAGE_ACTIVE = 1u << 1;
+static constexpr uint32_t EGO_SESSION_EVENT_FLAG_STORAGE_ERROR = 1u << 2;
+static constexpr uint32_t EGO_SESSION_EVENT_FLAG_STORAGE_TCP_FALLBACK = 1u << 3;
+static constexpr uint32_t EGO_IMU_CALIBRATION_FLAG_BOOT = 1u << 0;
+static constexpr uint32_t EGO_IMU_CALIBRATION_FLAG_MANUAL = 1u << 1;
+static constexpr uint32_t EGO_IMU_CALIBRATION_FLAG_GYRO_BIAS_VALID = 1u << 2;
+static constexpr uint32_t EGO_IMU_CALIBRATION_FLAG_ACCEL_REF_VALID = 1u << 3;
+static constexpr uint32_t EGO_IMU_CALIBRATION_FLAG_LOW_SAMPLE_COUNT = 1u << 4;
+static constexpr uint32_t EGO_CAN_STATUS_RUNNING = 1u << 0;
+static constexpr uint32_t EGO_CAN_STATUS_DISABLED = 1u << 1;
+static constexpr uint32_t EGO_CAN_STATUS_FILTER_FAILED = 1u << 2;
+static constexpr uint32_t EGO_CAN_STATUS_BUS_OFF = 1u << 3;
+static constexpr uint32_t EGO_CAN_STATUS_DRIVER_LOST = 1u << 4;
 
 // Data TCP payload type. Values match proto/ego/v1/ego_common.proto.
 enum class FramePayloadType : uint32_t {
@@ -39,11 +60,30 @@ enum class FrameFlags : uint32_t {
     PAYLOAD_KEYFRAME = 1u << 3,
 };
 
+enum class TimeSource : uint32_t {
+    UNKNOWN = 0,
+    BOARD_MONOTONIC = 1,
+    GPS_UTC = 2,
+};
+
+enum class TimeSyncStatus : uint32_t {
+    FREE_RUNNING = 0,
+    GPS_LOCKED = 1,
+};
+
 inline constexpr uint32_t to_u32(FramePayloadType v) {
     return static_cast<uint32_t>(v);
 }
 
 inline constexpr uint32_t to_u32(FrameFlags v) {
+    return static_cast<uint32_t>(v);
+}
+
+inline constexpr uint32_t to_u32(TimeSource v) {
+    return static_cast<uint32_t>(v);
+}
+
+inline constexpr uint32_t to_u32(TimeSyncStatus v) {
     return static_cast<uint32_t>(v);
 }
 
@@ -138,13 +178,6 @@ struct CanDecodedValuePacket {
     uint32_t can_id;
 
     float value;
-    uint32_t raw_value;
-    uint32_t flags;
-
-    uint8_t dlc;
-    uint8_t reserved0;
-    uint8_t reserved1;
-    uint8_t reserved2;
 };
 
 struct CanRawFramePacket {
@@ -165,10 +198,6 @@ struct TrajectoryPointPacket {
     float x_m;
     float y_m;
     float z_m;
-
-    float vx_mps;
-    float vy_mps;
-    float vz_mps;
 
     float yaw_rad;
     float pitch_rad;
@@ -233,6 +262,44 @@ struct SystemStatusPacket {
     float cpu_load_sharc1;
 };
 
+// Current minimal firmware CONFIG_SNAPSHOT binary payload.
+// The text bytes start immediately after ConfigSnapshotBinaryHeader and are
+// UTF-8/ASCII key=value lines.
+struct ConfigSnapshotBinaryHeader {
+    uint32_t magic;
+    uint16_t format_version;
+    uint16_t header_size;
+    uint32_t payload_format;
+    uint32_t flags;
+    uint64_t generated_t_ns;
+    uint32_t text_size;
+    uint32_t text_crc32;
+    uint32_t config_generation;
+    uint32_t active_mask;
+    uint32_t required_mask;
+    uint32_t invalid_mask;
+    uint32_t reserved0;
+};
+
+// Current minimal firmware SESSION_STARTED/SESSION_ENDED binary payload.
+// The metadata text bytes start immediately after SessionEventBinaryHeader and
+// are UTF-8/ASCII key=value lines. Full protobuf SessionMetadata remains the
+// target format for the protobuf control/data mode.
+struct SessionEventBinaryHeader {
+    uint32_t magic;
+    uint16_t format_version;
+    uint16_t header_size;
+    uint32_t event_type;
+    uint32_t flags;
+    uint64_t session_id_hi;
+    uint64_t session_id_lo;
+    uint64_t t_ns;
+    uint32_t metadata_text_size;
+    uint32_t metadata_text_crc32;
+    uint32_t config_generation;
+    uint32_t reserved0;
+};
+
 struct ImuCalibrationEventPacket {
     uint64_t t_ns;
 
@@ -255,12 +322,14 @@ static_assert(sizeof(EgoFrameHeader) == 72, "EgoFrameHeader size must be 72 byte
 static_assert(sizeof(EgoControlMessageHeader) == 32, "EgoControlMessageHeader size must be 32 bytes");
 static_assert(sizeof(AudioBlockBinaryHeader) == 48, "AudioBlockBinaryHeader size must be 48 bytes");
 static_assert(sizeof(ImuWindowPacket) == 76, "ImuWindowPacket size must be 76 bytes");
-static_assert(sizeof(CanDecodedValuePacket) == 32, "CanDecodedValuePacket size must be 32 bytes");
+static_assert(sizeof(CanDecodedValuePacket) == 20, "CanDecodedValuePacket size must be 20 bytes");
 static_assert(sizeof(CanRawFramePacket) == 24, "CanRawFramePacket size must be 24 bytes");
-static_assert(sizeof(TrajectoryPointPacket) == 64, "TrajectoryPointPacket size must be 64 bytes");
+static_assert(sizeof(TrajectoryPointPacket) == 52, "TrajectoryPointPacket size must be 52 bytes");
 static_assert(sizeof(GpsFixPacket) == 56, "GpsFixPacket size must be 56 bytes");
 static_assert(sizeof(TimeStatusPacket) == 40, "TimeStatusPacket size must be 40 bytes");
 static_assert(sizeof(SystemStatusPacket) == 56, "SystemStatusPacket size must be 56 bytes");
+static_assert(sizeof(ConfigSnapshotBinaryHeader) == 52, "ConfigSnapshotBinaryHeader size must be 52 bytes");
+static_assert(sizeof(SessionEventBinaryHeader) == 56, "SessionEventBinaryHeader size must be 56 bytes");
 static_assert(sizeof(ImuCalibrationEventPacket) == 44, "ImuCalibrationEventPacket size must be 44 bytes");
 
 inline EgoFrameHeader make_frame_header(

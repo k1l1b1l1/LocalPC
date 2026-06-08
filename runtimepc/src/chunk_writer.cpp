@@ -43,6 +43,42 @@ bool ChunkWriter::Open() {
     return OpenChunk();
 }
 
+bool ChunkWriter::OpenForResume(const IndexTail& tail) {
+    std::lock_guard<std::mutex> lock(mu_);
+    std::error_code ec;
+    std::filesystem::create_directories(session_dir_, ec);
+    current_chunk_id_ = tail.chunk_id;
+    total_packets_ = tail.line_count;
+    const std::string filename = "ego_" + std::to_string(current_chunk_id_) + ".bin";
+    const std::string path = (std::filesystem::path(session_dir_) / filename).string();
+    chunk_path_ = path;
+    chunk_stream_.open(path, std::ios::binary | std::ios::app);
+    if (!chunk_stream_.good()) {
+        return false;
+    }
+    const std::string index_path = (std::filesystem::path(session_dir_) / "ego.index").string();
+    index_path_ = index_path;
+    index_stream_.open(index_path, std::ios::app);
+    if (!index_stream_.good()) {
+        chunk_stream_.close();
+        return false;
+    }
+    current_chunk_offset_ = tail.chunk_offset;
+    if (current_chunk_offset_ == 0U && std::filesystem::exists(path)) {
+        current_chunk_offset_ = static_cast<std::uint64_t>(std::filesystem::file_size(path, ec));
+    }
+    current_chunk_bytes_ = current_chunk_offset_;
+    total_bytes_ = current_chunk_offset_;
+    chunk_opened_at_ = std::chrono::steady_clock::now();
+    ChunkInfo info{};
+    info.filename = filename;
+    info.bytes = current_chunk_bytes_;
+    info.packet_count = tail.line_count;
+    info.last_ts_ns = tail.last_ts_ns;
+    chunks_.push_back(info);
+    return true;
+}
+
 bool ChunkWriter::OpenChunk() {
     const std::string filename =
         "ego_" + std::to_string(current_chunk_id_) + ".bin";

@@ -62,6 +62,13 @@ struct RuntimeConfig {
         std::string s3_config_path = "/etc/ego-offline/s3.local.yaml";
         bool skip_s3 = false;
     } offline;
+
+    bool reconnect_enabled = true;
+    std::uint32_t reconnect_interval_ms = 500U;
+    std::uint32_t reconnect_max_attempts = 0U;
+    std::uint32_t checkpoint_packets = 200U;
+    bool auto_resume_on_run = false;
+    bool backfill_enabled = false;
 };
 
 RuntimeConfig LoadConfig(int argc, char** argv);

@@ -317,6 +317,47 @@ stand         → оркестратор полной цепочки на ПК-�
 
 ---
 
+## Reconnect и продолжение сессии (Data TCP)
+
+При обрыве **только Data TCP** (процесс `ego-runtime` жив, Control и сессия на плате активны) runtime **не** вызывает `stop` / offline. Watchdog переподключается к `:5001`, плата отдаёт replay-окно, Pi пишет только кадры с `seq > last_seq_`.
+
+### Checkpoint
+
+В каталоге сессии: `logs/session_checkpoint.json` — `board_session_id`, `last_seq`, `data_link`, обновляется каждые `network.checkpoint_packets` пакетов.
+
+Восстановление `last_seq` при resume: `max(checkpoint, хвост ego.index)`.
+
+### CLI / IPC
+
+| Команда | Действие |
+|---------|----------|
+| `./run.sh resume` | Продолжить прерванную сессию (тот же `session-*` dir) |
+| `./run.sh reconnect` | Принудительный Data TCP reconnect |
+| `./run.sh start` | Новая сессия; при незавершённой — `ERR session_busy use RESUME` |
+| `./run.sh status` | + `data_link`, `last_seq`, `reconnect_count`, `packets_replayed` |
+
+Демон: `session.auto_resume_on_run: true` — автоматический `resume` после `run`.
+
+### Конфиг (`board.yaml`)
+
+```yaml
+network:
+  reconnect_enabled: true
+  reconnect_interval_ms: 500
+  reconnect_max_attempts: 0    # 0 = бесконечно
+  checkpoint_packets: 200
+session:
+  auto_resume_on_run: false
+  backfill_enabled: false      # фаза 3: log_get с SD платы
+```
+
+### Ограничения
+
+- Replay-окно ограничено RAM на плате; длинный обрыв → gap в Pi-архиве (полный лог на SD платы).
+- `backfill_enabled` — заглушка фазы 3; при gap пишется warning в `runtime_error.log`.
+
+---
+
 ## Частые вопросы
 
 **Данные приходят по LAN?**  

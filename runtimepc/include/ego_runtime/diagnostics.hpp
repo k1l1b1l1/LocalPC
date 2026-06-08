@@ -16,6 +16,9 @@ struct RuntimeMetrics {
     std::uint64_t packets_lost = 0U;
     std::uint64_t out_of_order = 0U;
     std::uint64_t packets_replayed = 0U;
+    std::uint64_t reconnect_count = 0U;
+    double data_link_down_sec = 0.0;
+    std::uint64_t backfill_gap_frames = 0U;
     std::uint64_t time_gaps = 0U;
     std::uint64_t buffer_dropped = 0U;
     double write_mbps = 0.0;
@@ -51,6 +54,12 @@ public:
 
     void OnPacketReplayed() { ++packets_replayed_; }
 
+    void OnReconnect() { ++reconnect_count_; }
+
+    void SetDataLinkDownSec(double sec) { data_link_down_sec_.store(sec); }
+
+    void SetBackfillGapFrames(std::uint64_t frames) { backfill_gap_frames_.store(frames); }
+
     void SetBufferDropped(std::uint64_t dropped) { buffer_dropped_.store(dropped); }
 
     void SetDiskFreeGb(double gb) { disk_free_gb_.store(gb); }
@@ -68,6 +77,9 @@ public:
         m.packets_lost = packets_lost_.load();
         m.out_of_order = out_of_order_.load();
         m.packets_replayed = packets_replayed_.load();
+        m.reconnect_count = reconnect_count_.load();
+        m.data_link_down_sec = data_link_down_sec_.load();
+        m.backfill_gap_frames = backfill_gap_frames_.load();
         m.time_gaps = time_gaps_.load();
         m.buffer_dropped = buffer_dropped_.load();
         m.disk_free_gb = disk_free_gb_.load();
@@ -91,6 +103,9 @@ private:
     std::atomic<std::uint64_t> packets_lost_{0};
     std::atomic<std::uint64_t> out_of_order_{0};
     std::atomic<std::uint64_t> packets_replayed_{0};
+    std::atomic<std::uint64_t> reconnect_count_{0};
+    std::atomic<double> data_link_down_sec_{0.0};
+    std::atomic<std::uint64_t> backfill_gap_frames_{0};
     std::atomic<std::uint64_t> time_gaps_{0};
     std::atomic<std::uint64_t> buffer_dropped_{0};
     std::atomic<std::uint64_t> bytes_written_{0};

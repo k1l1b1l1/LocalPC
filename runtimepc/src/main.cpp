@@ -31,6 +31,8 @@ void PrintUsage() {
     std::cout << "Commands:\n";
     std::cout << "  run         Long-lived daemon (systemd); waits for SIGTERM/SIGINT\n";
     std::cout << "  start       Start recording in running daemon (IPC)\n";
+    std::cout << "  resume      Resume interrupted session (IPC)\n";
+    std::cout << "  reconnect   Reconnect Data TCP to board (IPC)\n";
     std::cout << "  stop        Stop recording in running daemon (IPC)\n";
     std::cout << "  status      Session status (IPC if daemon running)\n";
     std::cout << "  diagnostics Detailed metrics (IPC if daemon running)\n\n";
@@ -79,6 +81,12 @@ bool RunDaemon(ego_runtime::RuntimeService& service, ego_runtime::RuntimeConfig&
     }
 
     std::cout << "ego-runtime daemon running (SIGTERM/SIGINT to stop)\n";
+    if (config.auto_resume_on_run) {
+        const auto resume_rc = service.ResumeRecording("");
+        if (resume_rc == ego_runtime::RuntimeErrorCode::kOk) {
+            std::cout << "auto-resume: active session restored\n";
+        }
+    }
     ego_runtime::WaitForShutdown();
     service.StopRecording(ego_runtime::ShutdownReason());
     service.StopDaemon();
@@ -96,6 +104,10 @@ int RunIpcClient(const ego_runtime::RuntimeConfig& config, const std::string& co
         ipc_cmd = "STOP cli_stop";
     } else if (command == "start") {
         ipc_cmd = "START";
+    } else if (command == "resume") {
+        ipc_cmd = "RESUME";
+    } else if (command == "reconnect") {
+        ipc_cmd = "RECONNECT";
     } else if (command == "status") {
         ipc_cmd = "STATUS";
     } else {
@@ -153,8 +165,8 @@ int main(int argc, char** argv) {
         return RunDaemon(service, config) ? 0 : ExitFromError(ego_runtime::RuntimeErrorCode::kInternalError);
     }
 
-    if (command == "start" || command == "stop" || command == "status" || command == "stats" ||
-        command == "diagnostics") {
+    if (command == "start" || command == "stop" || command == "resume" || command == "reconnect" ||
+        command == "status" || command == "stats" || command == "diagnostics") {
         if (!config.input_file.empty()) {
             ego_runtime::RuntimeService service(config);
             if (!service.StartDaemon()) {

@@ -49,6 +49,10 @@ public:
     RuntimeErrorCode Start(const ScenarioMetadata& scenario,
                            const std::string& source_ip = "",
                            const std::string& session_id = "");
+    RuntimeErrorCode Resume(const ScenarioMetadata& scenario,
+                            const std::string& session_id,
+                            const std::string& storage_path,
+                            const std::string& started_at_utc = "");
     RuntimeErrorCode Stop(const std::string& reason = "user_stop");
     RuntimeErrorCode EmergencyStop(const std::string& reason);
 

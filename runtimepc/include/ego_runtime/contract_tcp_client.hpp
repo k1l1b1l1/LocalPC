@@ -26,6 +26,7 @@ public:
     ContractTcpClient& operator=(const ContractTcpClient&) = delete;
 
     bool Start();
+    bool Reconnect();
     void Stop();
     bool Running() const { return running_.load(); }
     const std::string& LastError() const { return last_error_; }

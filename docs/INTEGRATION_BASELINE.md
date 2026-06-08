@@ -53,9 +53,24 @@ sudo apt install -y libprotobuf-dev protobuf-compiler
 
 1. `./run.sh run` — демон (IPC), без записи
 2. `./run.sh start` — HELLO + START_SESSION → Data → запись
-3. `./run.sh stop` — STOP_SESSION → SessionEnded → finalize → offline
+3. **Обрыв Data TCP** — `data_link=down|reconnecting`, watchdog reconnect, dedup `seq <= last_seq`, checkpoint на диск
+4. `./run.sh resume` — продолжение той же `session-*` (после reboot Pi / kill ego-runtime)
+5. `./run.sh reconnect` — принудительный Data reconnect (IPC)
+6. `./run.sh stop` — STOP_SESSION → SessionEnded → finalize → offline
+
+При обрыве Data **не** вызывать `stop` — иначе этап считается завершённым.
+
+### STATUS (IPC / `./run.sh status`)
+
+Дополнительные поля: `data_link`, `last_seq`, `reconnect_count`, `packets_replayed`, `data_link_down_sec`, `session_dir`.
+
+### Reconnect (конфиг)
+
+`network.reconnect_enabled`, `reconnect_interval_ms`, `reconnect_max_attempts`, `checkpoint_packets`, `session.auto_resume_on_run`.
 
 ## Стенд (micro)
 
 - `auto_start_on_data_connect=False` (сессия только после Control START)
 - Pi инициирует `./run.sh start`, не ПК
+- `ego_device_server`: RAM replay-окно при reconnect Data-клиента (IT-04)
+- GUI: при `Recording` + `data_link=down` — **resume**, не сброс сессии (`rpi_remote.ensure_pi_daemon`)

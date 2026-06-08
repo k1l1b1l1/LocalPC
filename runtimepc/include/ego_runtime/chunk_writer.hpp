@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "ego_runtime/config.hpp"
+#include "ego_runtime/session_checkpoint.hpp"
 
 namespace ego_runtime {
 
@@ -24,6 +25,7 @@ public:
     ChunkWriter(std::string session_dir, RuntimeConfig config);
 
     bool Open();
+    bool OpenForResume(const IndexTail& tail);
     bool WriteContractFrame(const std::vector<std::uint8_t>& frame_bytes);
     bool WritePacket(const std::vector<std::uint8_t>& frame_bytes) { return WriteContractFrame(frame_bytes); }
     void Flush(bool fsync_now);

@@ -61,6 +61,25 @@ bool ContractTcpClient::Start() {
     if (running_.load()) {
         return true;
     }
+    stop_requested_ = false;
+    return Reconnect();
+}
+
+bool ContractTcpClient::Reconnect() {
+    if (running_.load()) {
+        return true;
+    }
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+    if (socket_fd_ != static_cast<SocketHandle>(-1)) {
+#if defined(_WIN32)
+        closesocket(static_cast<SOCKET>(socket_fd_));
+#else
+        close(static_cast<int>(socket_fd_));
+#endif
+        socket_fd_ = static_cast<SocketHandle>(-1);
+    }
 #if defined(_WIN32)
     WSADATA wsa{};
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {

@@ -80,6 +80,18 @@ void ParseScalar(const std::string& key, const std::string& value, RuntimeConfig
         cfg.offline.s3_config_path = Unquote(value);
     } else if (key == "offline.skip_s3") {
         cfg.offline.skip_s3 = (value == "true" || value == "1");
+    } else if (key == "network.reconnect_enabled") {
+        cfg.reconnect_enabled = (value == "true" || value == "1");
+    } else if (key == "network.reconnect_interval_ms") {
+        cfg.reconnect_interval_ms = static_cast<std::uint32_t>(std::stoul(value));
+    } else if (key == "network.reconnect_max_attempts") {
+        cfg.reconnect_max_attempts = static_cast<std::uint32_t>(std::stoul(value));
+    } else if (key == "network.checkpoint_packets") {
+        cfg.checkpoint_packets = static_cast<std::uint32_t>(std::stoul(value));
+    } else if (key == "session.auto_resume_on_run") {
+        cfg.auto_resume_on_run = (value == "true" || value == "1");
+    } else if (key == "session.backfill_enabled") {
+        cfg.backfill_enabled = (value == "true" || value == "1");
     }
 }
 

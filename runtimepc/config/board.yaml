@@ -6,6 +6,10 @@ network:
   board_control_port: 5000    # SC589 Control TCP (HELLO, START/STOP)
   data_port: 5001             # SC589 Data TCP (EgoFrameHeader + payload)
   max_payload_bytes: 65536
+  reconnect_enabled: true
+  reconnect_interval_ms: 500
+  reconnect_max_attempts: 0   # 0 = бесконечные попытки
+  checkpoint_packets: 200
 
 ipc:
   port: 19002
@@ -23,6 +27,8 @@ storage:
 
 session:
   auto_start_on_session_started: false
+  auto_resume_on_run: false
+  backfill_enabled: false   # фаза 3: догон gap через Control log_get
   vehicle_id: "CAR-001"
   test_stand_config: "rpi5-field"
 

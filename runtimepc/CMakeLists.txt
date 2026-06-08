@@ -75,6 +75,7 @@ add_library(ego_runtime_lib STATIC
     src/control_ipc.cpp
     src/error_log.cpp
     src/runtime_service.cpp
+    src/session_checkpoint.cpp
     src/session_integrity.cpp
     src/session_manager.cpp
     src/offline_trigger.cpp

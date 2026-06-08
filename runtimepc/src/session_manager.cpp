@@ -73,6 +73,27 @@ RuntimeErrorCode SessionManager::Start(const ScenarioMetadata& scenario,
     return RuntimeErrorCode::kOk;
 }
 
+RuntimeErrorCode SessionManager::Resume(const ScenarioMetadata& scenario,
+                                        const std::string& session_id,
+                                        const std::string& storage_path,
+                                        const std::string& started_at_utc) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (active_ && active_->state == SessionState::kRecording) {
+        return RuntimeErrorCode::kSessionBusy;
+    }
+    if (session_id.empty() || storage_path.empty()) {
+        return RuntimeErrorCode::kInternalError;
+    }
+    scenario_ = scenario;
+    SessionInfo info{};
+    info.session_id = session_id;
+    info.storage_path = storage_path;
+    info.started_at_utc = started_at_utc.empty() ? UtcNowIso8601() : started_at_utc;
+    info.state = SessionState::kRecording;
+    active_ = info;
+    return RuntimeErrorCode::kOk;
+}
+
 RuntimeErrorCode SessionManager::Stop(const std::string& reason) {
     std::lock_guard<std::mutex> lock(mu_);
     if (!active_ || active_->state != SessionState::kRecording) {

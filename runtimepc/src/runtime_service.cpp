@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -9,6 +10,7 @@
 #include "ego_runtime/contract_frame_io.hpp"
 #include "ego_runtime/session_integrity.hpp"
 #include "ego_runtime/offline_trigger.hpp"
+#include "ego_runtime/session_checkpoint.hpp"
 #include "ego_runtime/util.hpp"
 #include "ego_protocol_packets.hpp"
 
@@ -45,7 +47,36 @@ RuntimeErrorCode RuntimeService::StartRecording(const ScenarioMetadata& scenario
     if (!config_.input_file.empty()) {
         return StartLocalRecording(scenario);
     }
+    {
+        std::lock_guard<std::recursive_mutex> lock(service_mu_);
+        if (sessions_.State() == SessionState::kRecording) {
+            return RuntimeErrorCode::kSessionBusy;
+        }
+        if (sessions_.State() == SessionState::kIdle) {
+            const std::string resumable = FindResumableSessionDir(config_.data_root);
+            if (!resumable.empty()) {
+                return RuntimeErrorCode::kSessionBusy;
+            }
+        }
+    }
     return StartBoardSession(scenario);
+}
+
+RuntimeErrorCode RuntimeService::ResumeRecording(const std::string& session_dir) {
+    if (!config_.input_file.empty()) {
+        return RuntimeErrorCode::kInternalError;
+    }
+    return ResumeBoardSession(session_dir);
+}
+
+RuntimeErrorCode RuntimeService::ReconnectDataLinkCommand() {
+    if (sessions_.State() != SessionState::kRecording) {
+        return RuntimeErrorCode::kNotRecording;
+    }
+    if (ReconnectDataLink()) {
+        return RuntimeErrorCode::kOk;
+    }
+    return RuntimeErrorCode::kInternalError;
 }
 
 RuntimeErrorCode RuntimeService::StartLocalRecording(const ScenarioMetadata& scenario) {
@@ -125,6 +156,9 @@ RuntimeErrorCode RuntimeService::StartBoardSession(const ScenarioMetadata& scena
     last_seq_ = 0U;
     rate_start_ = std::chrono::steady_clock::now();
     recording_start_ = rate_start_;
+    cold_data_session_ = true;
+    packets_since_checkpoint_ = 0U;
+    SetDataLinkState(DataLinkState::kUp);
 
     if (!EnsureDataClient()) {
         error_log_->Write(LogLevel::kError, "data connect failed after control start");
@@ -156,9 +190,202 @@ bool RuntimeService::EnsureDataClient() {
             config_, [this](ContractFrame f) { OnContractFrame(std::move(f)); });
     }
     if (contract_client_ && !contract_client_->Running()) {
-        return contract_client_->Start();
+        return contract_client_->Reconnect();
     }
     return contract_client_ != nullptr && contract_client_->Running();
+}
+
+RuntimeErrorCode RuntimeService::ResumeBoardSession(const std::string& session_dir_arg) {
+    std::lock_guard<std::recursive_mutex> lock(service_mu_);
+    if (sessions_.State() == SessionState::kRecording) {
+        return RuntimeErrorCode::kSessionBusy;
+    }
+
+    std::string session_dir = session_dir_arg;
+    if (session_dir.empty()) {
+        session_dir = FindResumableSessionDir(config_.data_root);
+    }
+    if (session_dir.empty() || SessionIsFinalized(session_dir)) {
+        return RuntimeErrorCode::kNotRecording;
+    }
+
+    SessionCheckpoint checkpoint{};
+    IndexTail tail{};
+    if (!LoadCheckpoint(session_dir, checkpoint)) {
+        if (!ReadIndexTail(session_dir, tail)) {
+            return RuntimeErrorCode::kInternalError;
+        }
+        checkpoint.session_id = std::filesystem::path(session_dir).filename().string();
+        checkpoint.last_seq = tail.last_seq;
+        checkpoint.last_ts_ns = tail.last_ts_ns;
+        checkpoint.chunk_id = tail.chunk_id;
+    } else if (!ReadIndexTail(session_dir, tail)) {
+        tail.last_seq = checkpoint.last_seq;
+        tail.last_ts_ns = checkpoint.last_ts_ns;
+        tail.chunk_id = checkpoint.chunk_id;
+    } else if (tail.last_seq > checkpoint.last_seq) {
+        checkpoint.last_seq = tail.last_seq;
+        checkpoint.last_ts_ns = tail.last_ts_ns;
+        checkpoint.chunk_id = tail.chunk_id;
+    }
+
+    const ScenarioMetadata scenario = DefaultScenario();
+    const auto rc = sessions_.Resume(scenario, checkpoint.session_id, session_dir);
+    if (rc != RuntimeErrorCode::kOk) {
+        return rc;
+    }
+
+    board_session_id_ = checkpoint.board_session_id;
+    last_seq_ = checkpoint.last_seq;
+    last_ts_ns_ = checkpoint.last_ts_ns;
+    seen_ts_ = checkpoint.last_ts_ns > 0U;
+    seq_initialized_ = checkpoint.last_seq > 0U;
+    cold_data_session_ = false;
+    packets_since_checkpoint_ = 0U;
+
+    error_log_ = std::make_unique<ErrorLog>(session_dir + "/logs/runtime_error.log");
+    buffer_ = std::make_unique<PacketBuffer>(config_.packet_buffer_capacity, config_.packet_buffer_max_bytes);
+    writer_ = std::make_unique<ChunkWriter>(session_dir, config_);
+    if (!writer_->OpenForResume(tail)) {
+        sessions_.MarkStopped("resume_open_failed");
+        writer_.reset();
+        buffer_.reset();
+        error_log_.reset();
+        return RuntimeErrorCode::kInternalError;
+    }
+
+    if (!control_client_) {
+        control_client_ = std::make_unique<ContractControlClient>(config_);
+        if (!control_client_->Connect()) {
+            if (error_log_) {
+                error_log_->Write(LogLevel::kWarning, "resume: control reconnect failed");
+            }
+        } else {
+            (void)control_client_->Hello("ego-runtime");
+        }
+    }
+
+    SetDataLinkState(DataLinkState::kReconnecting);
+    if (!EnsureDataClient()) {
+        SetDataLinkState(DataLinkState::kDown);
+        if (error_log_) {
+            error_log_->Write(LogLevel::kWarning, "resume: data reconnect pending (watchdog)");
+        }
+    } else {
+        SetDataLinkState(DataLinkState::kUp);
+    }
+
+    rate_start_ = std::chrono::steady_clock::now();
+    recording_start_ = rate_start_;
+    WriteCheckpoint(session_dir, SessionCheckpoint{
+        checkpoint.session_id, board_session_id_, last_seq_, last_ts_ns_, checkpoint.chunk_id,
+        DataLinkStateToString(data_link_state_.load()), UtcNowIso8601()});
+    return RuntimeErrorCode::kOk;
+}
+
+bool RuntimeService::ReconnectDataLink() {
+    if (sessions_.State() != SessionState::kRecording || !config_.input_file.empty()) {
+        return false;
+    }
+    if (!config_.reconnect_enabled) {
+        return false;
+    }
+    SetDataLinkState(DataLinkState::kReconnecting);
+    if (!contract_client_) {
+        contract_client_ = std::make_unique<ContractTcpClient>(
+            config_, [this](ContractFrame f) { OnContractFrame(std::move(f)); });
+    }
+    if (contract_client_->Reconnect()) {
+        SetDataLinkState(DataLinkState::kUp);
+        diagnostics_.OnReconnect();
+        MaybeWriteCheckpoint();
+        if (error_log_) {
+            error_log_->Write(LogLevel::kInfo, "data link reconnected");
+        }
+        return true;
+    }
+    SetDataLinkState(DataLinkState::kDown);
+    return false;
+}
+
+void RuntimeService::SetDataLinkState(const DataLinkState state) {
+    const DataLinkState prev = data_link_state_.exchange(state);
+    if (state == DataLinkState::kDown && prev != DataLinkState::kDown) {
+        data_link_down_since_ = std::chrono::steady_clock::now();
+        data_link_down_since_valid_ = true;
+    }
+    if (state == DataLinkState::kUp) {
+        data_link_down_since_valid_ = false;
+        UpdateDataLinkDownMetric();
+    }
+}
+
+void RuntimeService::UpdateDataLinkDownMetric() {
+    if (!data_link_down_since_valid_) {
+        diagnostics_.SetDataLinkDownSec(0.0);
+        return;
+    }
+    const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - data_link_down_since_)
+                             .count();
+    diagnostics_.SetDataLinkDownSec(elapsed);
+}
+
+void RuntimeService::MaybeWriteCheckpoint() {
+    if (sessions_.State() != SessionState::kRecording) {
+        return;
+    }
+    const std::string session_dir = sessions_.SessionDir();
+    if (session_dir.empty()) {
+        return;
+    }
+    if (config_.checkpoint_packets > 0U && packets_since_checkpoint_ < config_.checkpoint_packets) {
+        return;
+    }
+    packets_since_checkpoint_ = 0U;
+    SessionCheckpoint cp{};
+    if (const auto active = sessions_.ActiveSession()) {
+        cp.session_id = active->session_id;
+    }
+    cp.board_session_id = board_session_id_;
+    cp.last_seq = last_seq_;
+    cp.last_ts_ns = last_ts_ns_;
+    cp.data_link = DataLinkStateToString(data_link_state_.load());
+    cp.updated_at_utc = UtcNowIso8601();
+    if (writer_) {
+        cp.chunk_id = static_cast<std::uint32_t>(writer_->Chunks().empty() ? 0U : writer_->Chunks().size() - 1U);
+    }
+    WriteCheckpoint(session_dir, cp);
+}
+
+void RuntimeService::DataLinkWatchdogLoop() {
+    std::uint32_t attempts = 0U;
+    while (!reconnect_watchdog_stop_.load()) {
+        if (config_.reconnect_enabled && sessions_.State() == SessionState::kRecording && !sync_file_mode_) {
+            if (contract_client_ && !contract_client_->Running()) {
+                if (data_link_state_.load() != DataLinkState::kDown) {
+                    SetDataLinkState(DataLinkState::kDown);
+                    if (error_log_) {
+                        error_log_->Write(LogLevel::kWarning, "data link down");
+                    }
+                }
+                UpdateDataLinkDownMetric();
+                const std::uint32_t max_attempts = config_.reconnect_max_attempts;
+                if (max_attempts == 0U || attempts < max_attempts) {
+                    if (ReconnectDataLink()) {
+                        attempts = 0U;
+                    } else {
+                        ++attempts;
+                    }
+                }
+            } else if (data_link_state_.load() == DataLinkState::kUp) {
+                attempts = 0U;
+            }
+        }
+        const auto sleep_ms = std::max<std::uint32_t>(100U, config_.reconnect_interval_ms);
+        for (std::uint32_t i = 0U; i < sleep_ms / 100U && !reconnect_watchdog_stop_.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
 }
 
 void RuntimeService::ResetFrameWaitFlags() {
@@ -216,8 +443,8 @@ RuntimeErrorCode RuntimeService::StopBoardSession(const std::string& reason) {
 
     if (contract_client_ && contract_client_->Running()) {
         // PC GUI may close ego TCP before Pi stop — don't block finalize on SESSION_ENDED.
-        const std::chrono::seconds ended_wait =
-            control_stop_ok ? std::chrono::seconds(3) : std::chrono::seconds(1);
+        const std::chrono::milliseconds ended_wait =
+            control_stop_ok ? std::chrono::milliseconds(500) : std::chrono::milliseconds(500);
         if (!WaitForDataFrame(static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED), ended_wait)) {
             if (error_log_) {
                 error_log_->Write(LogLevel::kWarning, "timeout waiting for SessionEnded frame");
@@ -236,7 +463,7 @@ RuntimeErrorCode RuntimeService::StopBoardSession(const std::string& reason) {
     finalize_in_progress_ = true;
     sessions_.Stop(reason);
     if (!sync_file_mode_ && buffer_) {
-        for (int i = 0; i < 500; ++i) {
+        for (int i = 0; i < 50; ++i) {
             if (buffer_->Size() == 0U) {
                 break;
             }
@@ -282,6 +509,8 @@ bool RuntimeService::StartDaemon() {
     if (!sync_file_mode_) {
         writer_thread_ = std::thread([this]() { WriterLoop(); });
         report_thread_ = std::thread([this]() { ReportLoop(); });
+        reconnect_watchdog_stop_ = false;
+        reconnect_thread_ = std::thread([this]() { DataLinkWatchdogLoop(); });
     }
     return true;
 }
@@ -299,6 +528,10 @@ bool RuntimeService::StartControlServer() {
 
 void RuntimeService::StopDaemon() {
     stop_threads_ = true;
+    reconnect_watchdog_stop_ = true;
+    if (reconnect_thread_.joinable()) {
+        reconnect_thread_.join();
+    }
     if (control_server_) {
         control_server_->Stop();
         control_server_.reset();
@@ -350,6 +583,10 @@ void RuntimeService::TrackContractSeq(const std::uint64_t seq) {
     }
     if (seq > last_seq_ + 1U) {
         diagnostics_.OnSeqGap(seq - last_seq_ - 1U);
+        if (config_.backfill_enabled && error_log_) {
+            error_log_->Write(LogLevel::kWarning,
+                              "seq gap detected; backfill via log_get not implemented (phase 3)");
+        }
     }
     last_seq_ = seq;
 }
@@ -409,6 +646,9 @@ void RuntimeService::OnContractFrame(ContractFrame frame) {
     if (sessions_.State() != SessionState::kRecording || is_replay) {
         return;
     }
+
+    ++packets_since_checkpoint_;
+    MaybeWriteCheckpoint();
 
     if (sync_file_mode_ && writer_) {
         if (writer_->WriteContractFrame(frame.bytes)) {
@@ -510,6 +750,8 @@ void RuntimeService::WriteRuntimeReport() const {
     json << "  \"seq_gaps\": " << m.seq_gaps << ",\n";
     json << "  \"out_of_order\": " << m.out_of_order << ",\n";
     json << "  \"packets_replayed\": " << m.packets_replayed << ",\n";
+    json << "  \"reconnect_count\": " << m.reconnect_count << ",\n";
+    json << "  \"data_link_down_sec\": " << m.data_link_down_sec << ",\n";
     json << "  \"time_gaps\": " << m.time_gaps << ",\n";
     json << "  \"buffer_dropped\": " << m.buffer_dropped << ",\n";
     json << "  \"disk_free_gb\": " << m.disk_free_gb << ",\n";
@@ -596,6 +838,8 @@ RuntimeStatus RuntimeService::Status() const {
         st.session_dir = active->storage_path;
     }
     st.board_session_id = board_session_id_;
+    st.data_link = data_link_state_.load();
+    st.last_seq = last_seq_;
     return st;
 }
 
@@ -626,9 +870,42 @@ std::string RuntimeService::HandleControlCommand(const std::string& command_line
             return "OK recording\n\n";
         }
         if (rc == RuntimeErrorCode::kSessionBusy) {
+            if (!FindResumableSessionDir(config_.data_root).empty()) {
+                return "ERR session_busy use RESUME\n\n";
+            }
             return "ERR session_busy\n\n";
         }
         return "ERR start_failed\n\n";
+    }
+    if (command_line == "RESUME" || command_line.rfind("RESUME ", 0) == 0) {
+        std::string dir;
+        if (command_line.size() > 7U) {
+            dir = command_line.substr(7U);
+            while (!dir.empty() && dir[0] == ' ') {
+                dir.erase(0U, 1U);
+            }
+        }
+        const auto rc = ResumeRecording(dir);
+        if (rc == RuntimeErrorCode::kOk) {
+            return "OK resumed\n\n";
+        }
+        if (rc == RuntimeErrorCode::kSessionBusy) {
+            return "ERR session_busy\n\n";
+        }
+        if (rc == RuntimeErrorCode::kNotRecording) {
+            return "ERR no_resumable_session\n\n";
+        }
+        return "ERR resume_failed\n\n";
+    }
+    if (command_line == "RECONNECT") {
+        const auto rc = ReconnectDataLinkCommand();
+        if (rc == RuntimeErrorCode::kOk) {
+            return "OK reconnected\n\n";
+        }
+        if (rc == RuntimeErrorCode::kNotRecording) {
+            return "ERR not_recording\n\n";
+        }
+        return "ERR reconnect_failed\n\n";
     }
     return "ERR unknown_command\n\n";
 }
@@ -656,6 +933,15 @@ std::string RuntimeService::BuildDiagnosticsText() const {
     out << "seq_gaps=" << st.metrics.seq_gaps << "\n";
     out << "disk_free_gb=" << st.metrics.disk_free_gb << "\n";
     out << "health=" << st.metrics.health << "\n";
+    out << "data_link=" << DataLinkStateToString(st.data_link) << "\n";
+    out << "last_seq=" << st.last_seq << "\n";
+    out << "packets_replayed=" << st.metrics.packets_replayed << "\n";
+    out << "reconnect_count=" << st.metrics.reconnect_count << "\n";
+    out << "data_link_down_sec=" << st.metrics.data_link_down_sec << "\n";
+    out << "backfill_gap_frames=" << st.metrics.backfill_gap_frames << "\n";
+    if (!sessions_.SessionDir().empty()) {
+        out << "session_dir=" << sessions_.SessionDir() << "\n";
+    }
     for (const auto& entry : st.metrics.reject_by_reason) {
         out << "reject_" << entry.first << "=" << entry.second << "\n";
     }

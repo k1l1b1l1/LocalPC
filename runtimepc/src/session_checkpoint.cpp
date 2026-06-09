@@ -171,4 +171,37 @@ std::string FindResumableSessionDir(const std::string& data_root) {
     return best_dir;
 }
 
+int AbandonResumableSessions(const std::string& data_root, const std::string& reason) {
+    const std::filesystem::path sessions_root = std::filesystem::path(data_root) / "sessions";
+    if (!std::filesystem::exists(sessions_root)) {
+        return 0;
+    }
+    const std::string ts = UtcNowIso8601();
+    int count = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(sessions_root)) {
+        if (!entry.is_directory()) {
+            continue;
+        }
+        const std::string dir = entry.path().string();
+        if (SessionIsFinalized(dir)) {
+            continue;
+        }
+        if (!std::filesystem::exists(entry.path() / "ego.index") &&
+            !std::filesystem::exists(CheckpointPath(dir))) {
+            continue;
+        }
+        std::filesystem::create_directories(entry.path() / "logs");
+        std::ostringstream json;
+        json << "{\n";
+        json << "  \"status\": \"abandoned\",\n";
+        json << "  \"reason\": \"" << JsonEscape(reason) << "\",\n";
+        json << "  \"abandoned_at_utc\": \"" << JsonEscape(ts) << "\"\n";
+        json << "}\n";
+        WriteTextAtomic(dir + "/final_runtime_summary.json", json.str());
+        WriteTextAtomic(dir + "/logs/abandon_reason.txt", reason + "\n");
+        ++count;
+    }
+    return count;
+}
+
 }  // namespace ego_runtime

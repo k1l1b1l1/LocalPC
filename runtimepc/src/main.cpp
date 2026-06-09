@@ -33,6 +33,7 @@ void PrintUsage() {
     std::cout << "  start       Start recording in running daemon (IPC)\n";
     std::cout << "  resume      Resume interrupted session (IPC)\n";
     std::cout << "  reconnect   Reconnect Data TCP to board (IPC)\n";
+    std::cout << "  abandon     Mark resumable sessions finalized (IPC)\n";
     std::cout << "  stop        Stop recording in running daemon (IPC)\n";
     std::cout << "  status      Session status (IPC if daemon running)\n";
     std::cout << "  diagnostics Detailed metrics (IPC if daemon running)\n\n";
@@ -108,6 +109,8 @@ int RunIpcClient(const ego_runtime::RuntimeConfig& config, const std::string& co
         ipc_cmd = "RESUME";
     } else if (command == "reconnect") {
         ipc_cmd = "RECONNECT";
+    } else if (command == "abandon") {
+        ipc_cmd = "ABANDON";
     } else if (command == "status") {
         ipc_cmd = "STATUS";
     } else {
@@ -166,7 +169,7 @@ int main(int argc, char** argv) {
     }
 
     if (command == "start" || command == "stop" || command == "resume" || command == "reconnect" ||
-        command == "status" || command == "stats" || command == "diagnostics") {
+        command == "abandon" || command == "status" || command == "stats" || command == "diagnostics") {
         if (!config.input_file.empty()) {
             ego_runtime::RuntimeService service(config);
             if (!service.StartDaemon()) {

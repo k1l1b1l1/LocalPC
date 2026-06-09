@@ -49,10 +49,11 @@ RuntimeErrorCode RuntimeService::StartRecording(const ScenarioMetadata& scenario
     }
     {
         std::lock_guard<std::recursive_mutex> lock(service_mu_);
-        if (sessions_.State() == SessionState::kRecording) {
+        const auto state = sessions_.State();
+        if (state == SessionState::kRecording) {
             return RuntimeErrorCode::kSessionBusy;
         }
-        if (sessions_.State() == SessionState::kIdle) {
+        if (state == SessionState::kIdle || state == SessionState::kClosed) {
             const std::string resumable = FindResumableSessionDir(config_.data_root);
             if (!resumable.empty()) {
                 return RuntimeErrorCode::kSessionBusy;
@@ -265,6 +266,21 @@ RuntimeErrorCode RuntimeService::ResumeBoardSession(const std::string& session_d
         }
     }
 
+    if (control_client_ && config_.input_file.empty()) {
+        const ControlStartSessionResult start =
+            control_client_->StartSession(scenario, checkpoint.session_id);
+        if (start.ok) {
+            board_session_id_ =
+                start.session_id.empty() ? checkpoint.session_id : start.session_id;
+            if (error_log_) {
+                error_log_->Write(LogLevel::kInfo, "resume: board START_SESSION ok");
+            }
+        } else if (error_log_) {
+            error_log_->Write(LogLevel::kWarning,
+                              "resume: board START_SESSION failed: " + start.error);
+        }
+    }
+
     SetDataLinkState(DataLinkState::kReconnecting);
     if (!EnsureDataClient()) {
         SetDataLinkState(DataLinkState::kDown);
@@ -441,11 +457,11 @@ RuntimeErrorCode RuntimeService::StopBoardSession(const std::string& reason) {
         }
     }
 
-    if (contract_client_ && contract_client_->Running()) {
-        // PC GUI may close ego TCP before Pi stop — don't block finalize on SESSION_ENDED.
-        const std::chrono::milliseconds ended_wait =
-            control_stop_ok ? std::chrono::milliseconds(500) : std::chrono::milliseconds(500);
-        if (!WaitForDataFrame(static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED), ended_wait)) {
+    if (contract_client_ && contract_client_->Running() && control_stop_ok) {
+        // PC GUI closes ego before Pi stop — wait SESSION_ENDED only if STOP ok.
+        if (!WaitForDataFrame(
+                static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED),
+                std::chrono::milliseconds(500))) {
             if (error_log_) {
                 error_log_->Write(LogLevel::kWarning, "timeout waiting for SessionEnded frame");
             }
@@ -906,6 +922,17 @@ std::string RuntimeService::HandleControlCommand(const std::string& command_line
             return "ERR not_recording\n\n";
         }
         return "ERR reconnect_failed\n\n";
+    }
+    if (command_line == "ABANDON" || command_line.rfind("ABANDON ", 0) == 0) {
+        std::string reason = "ipc_abandon";
+        if (command_line.size() > 8U) {
+            reason = command_line.substr(8U);
+            while (!reason.empty() && reason[0] == ' ') {
+                reason.erase(0U, 1U);
+            }
+        }
+        const int count = AbandonResumableSessions(config_.data_root, reason);
+        return "OK abandoned " + std::to_string(count) + "\n\n";
     }
     return "ERR unknown_command\n\n";
 }

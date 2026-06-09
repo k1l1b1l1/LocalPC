@@ -144,6 +144,11 @@ void TestCheckpointAndIndexTail() {
     Require(!ego_runtime::SessionIsFinalized(session_dir), "session must not be finalized");
     Require(ego_runtime::FindResumableSessionDir(data_root) == session_dir, "resumable dir lookup");
 
+    const int abandoned = ego_runtime::AbandonResumableSessions(data_root, "test_abandon");
+    Require(abandoned == 1, "expected one abandoned session");
+    Require(ego_runtime::SessionIsFinalized(session_dir), "session must be finalized after abandon");
+    Require(ego_runtime::FindResumableSessionDir(data_root).empty(), "no resumable after abandon");
+
     std::filesystem::remove_all(data_root, ec);
 }
 

@@ -29,5 +29,6 @@ bool WriteCheckpoint(const std::string& session_dir, const SessionCheckpoint& ch
 std::string CheckpointPath(const std::string& session_dir);
 std::string FindResumableSessionDir(const std::string& data_root);
 bool SessionIsFinalized(const std::string& session_dir);
+int AbandonResumableSessions(const std::string& data_root, const std::string& reason = "ipc_abandon");
 
 }  // namespace ego_runtime

@@ -16,6 +16,7 @@
 #include "ego_runtime/config.hpp"
 #include "ego_runtime/contract_frame_io.hpp"
 #include "ego_runtime/contract_tcp_client.hpp"
+#include "ego_runtime/runtime_service.hpp"
 #include "ego_runtime/session_integrity.hpp"
 #include "ego_runtime/session_checkpoint.hpp"
 
@@ -368,6 +369,67 @@ void TestFileIngestContract() {
     std::filesystem::remove_all(session_dir, ec);
 }
 
+void TestFileIngestKeepsSessionEnded() {
+    const std::string data_root =
+        (std::filesystem::temp_directory_path() / "ego_runtime_file_session_ended").string();
+    std::error_code ec;
+    std::filesystem::remove_all(data_root, ec);
+    std::filesystem::create_directories(data_root, ec);
+
+    const std::string input_path = data_root + "/input.bin";
+    {
+        std::ofstream out(input_path, std::ios::binary);
+        const auto started = BuildContractFrame(1U, ego::protocol::v1::FramePayloadType::SESSION_STARTED, {1U});
+        const auto config = BuildContractFrame(2U, ego::protocol::v1::FramePayloadType::CONFIG_SNAPSHOT, {2U});
+        const auto realtime = BuildContractFrame(3U, ego::protocol::v1::FramePayloadType::IMU_WINDOW, {3U});
+        const auto ended = BuildContractFrame(4U, ego::protocol::v1::FramePayloadType::SESSION_ENDED, {4U});
+        out.write(reinterpret_cast<const char*>(started.data()), static_cast<std::streamsize>(started.size()));
+        out.write(reinterpret_cast<const char*>(config.data()), static_cast<std::streamsize>(config.size()));
+        out.write(reinterpret_cast<const char*>(realtime.data()), static_cast<std::streamsize>(realtime.size()));
+        out.write(reinterpret_cast<const char*>(ended.data()), static_cast<std::streamsize>(ended.size()));
+    }
+
+    ego_runtime::RuntimeConfig cfg{};
+    cfg.data_root = data_root;
+    cfg.input_file = input_path;
+    cfg.offline.enabled = false;
+    cfg.flush_packets = 1U;
+    cfg.flush_interval_sec = 0U;
+    cfg.max_payload_bytes = 65536U;
+
+    ego_runtime::RuntimeService service(cfg);
+    Require(service.StartDaemon(), "start daemon failed");
+    const ego_runtime::ScenarioMetadata scenario{"test-session-ended", "test", "operator", ""};
+    Require(service.StartRecording(scenario) == ego_runtime::RuntimeErrorCode::kOk, "start local recording failed");
+    service.ProcessFileInput(input_path);
+    Require(service.StopRecording("file_eof") == ego_runtime::RuntimeErrorCode::kOk, "stop recording failed");
+
+    const std::string session_dir = service.Status().session_dir;
+    Require(!session_dir.empty(), "session_dir must exist after stop");
+
+    std::size_t frame_count = 0U;
+    std::uint32_t last_type = 0U;
+    std::uint64_t last_seq = 0U;
+    Require(ego_runtime::ReadContractFramesFromFile(
+                session_dir + "/ego_0.bin", 65536U,
+                [&](const std::vector<std::uint8_t>& frame) {
+                    ego::protocol::v1::EgoFrameHeader header{};
+                    std::memcpy(&header, frame.data(), sizeof(header));
+                    last_type = header.frame_type;
+                    last_seq = header.seq;
+                    ++frame_count;
+                    return true;
+                }),
+            "read output ego_0.bin failed");
+    Require(frame_count == 4U, "expected 4 frames including SessionEnded");
+    Require(last_type == static_cast<std::uint32_t>(ego::protocol::v1::FramePayloadType::SESSION_ENDED),
+            "last frame must be SessionEnded");
+    Require(last_seq == 4U, "last seq must be 4");
+
+    service.StopDaemon();
+    std::filesystem::remove_all(data_root, ec);
+}
+
 }  // namespace
 
 int main() {
@@ -377,6 +439,7 @@ int main() {
         TestCheckpointAndIndexTail();
         TestIT04ReplayReconnectDedup();
         TestFileIngestContract();
+        TestFileIngestKeepsSessionEnded();
         std::cout << "All ego_runtime tests passed\n";
         return 0;
     } catch (const std::exception& ex) {

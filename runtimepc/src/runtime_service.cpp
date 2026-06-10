@@ -637,10 +637,6 @@ void RuntimeService::OnContractFrame(ContractFrame frame) {
         frame_wait_cv_.notify_all();
     }
 
-    if (header.frame_type == static_cast<std::uint32_t>(FramePayloadType::SESSION_ENDED)) {
-        return;
-    }
-
     diagnostics_.OnPacketReceived();
 
     bool is_replay = false;
@@ -659,7 +655,8 @@ void RuntimeService::OnContractFrame(ContractFrame frame) {
         seen_ts_ = true;
     }
 
-    if (sessions_.State() != SessionState::kRecording || is_replay) {
+    const SessionState state = sessions_.State();
+    if ((state != SessionState::kRecording && state != SessionState::kStopping) || is_replay) {
         return;
     }
 

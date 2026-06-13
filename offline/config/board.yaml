@@ -16,4 +16,4 @@ s3:
   enabled: true
   require_pipeline_success: false
   require_real_mdf4: true
-  include_session_files: false  # TZ: только offline/; сырой ego/source — фаза 2
+  include_session_files: true   # session upload now includes raw/ together with offline/

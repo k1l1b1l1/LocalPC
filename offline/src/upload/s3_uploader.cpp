@@ -159,100 +159,36 @@ bool S3Uploader::gate_allowed(const std::filesystem::path& offline_dir,
     return true;
 }
 
-std::vector<std::filesystem::path> S3Uploader::collect_files(
-    const std::filesystem::path& offline_dir) const
+std::vector<S3Uploader::UploadCandidate> S3Uploader::collect_files(
+    const std::filesystem::path& session_dir,
+    const std::filesystem::path& offline_dir,
+    const std::string&           session_id) const
 {
-    std::vector<std::filesystem::path> out;
+    std::vector<S3Uploader::UploadCandidate> out;
     for (const auto& name : cfg_.s3.include_files) {
         if (name == "upload_manifest.json") continue;
         const auto p = offline_dir / name;
-        if (std::filesystem::exists(p) && std::filesystem::is_regular_file(p))
-            out.push_back(p);
-    }
-    return out;
-}
-
-std::vector<std::filesystem::path> S3Uploader::collect_session_files(
-    const std::filesystem::path& session_dir) const
-{
-    std::vector<std::filesystem::path> out;
-    if (!cfg_.s3.include_session_files) return out;
-
-    for (const auto& name : cfg_.s3.session_include_files) {
-        const auto p = session_dir / name;
-        if (std::filesystem::exists(p) && std::filesystem::is_regular_file(p))
-            out.push_back(p);
-    }
-
-    if (std::filesystem::exists(session_dir) && std::filesystem::is_directory(session_dir)) {
-        for (const auto& entry : std::filesystem::directory_iterator(session_dir)) {
-            if (!entry.is_regular_file()) continue;
-            const std::string name = entry.path().filename().string();
-            if (name.size() >= 4 && name.compare(0, 4, "ego_") == 0
-                && name.size() >= 8 && name.substr(name.size() - 4) == ".bin") {
-                out.push_back(entry.path());
-            }
+        if (std::filesystem::exists(p) && std::filesystem::is_regular_file(p)) {
+            out.push_back({p, object_key(session_id, "offline/" + p.filename().string())});
         }
     }
 
-    std::sort(out.begin(), out.end());
-    out.erase(std::unique(out.begin(), out.end()), out.end());
+    const auto raw_dir = session_dir / "raw";
+    if (std::filesystem::exists(raw_dir) && std::filesystem::is_directory(raw_dir)) {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(raw_dir)) {
+            if (!entry.is_regular_file()) continue;
+            const auto rel = std::filesystem::relative(entry.path(), raw_dir).generic_string();
+            out.push_back({entry.path(), object_key(session_id, "raw/" + rel)});
+        }
+    }
     return out;
 }
 
 std::string S3Uploader::object_key(const std::string& session_id,
-                                   const std::string& subdir,
-                                   const std::string& basename) const {
+                                   const std::string& relative_path) const {
     std::string prefix = cfg_.s3.prefix;
     while (!prefix.empty() && prefix.back() == '/') prefix.pop_back();
-    if (subdir.empty())
-        return prefix + "/" + session_id + "/" + basename;
-    return prefix + "/" + session_id + "/" + subdir + "/" + basename;
-}
-
-ExitCode S3Uploader::upload_file_batch(const std::vector<std::filesystem::path>& files,
-                                       const std::string& session_id,
-                                       const std::string& subdir,
-                                       UploadReport& report,
-                                       bool& all_ok)
-{
-    for (const auto& file : files) {
-        UploadFileResult fr;
-        fr.local_path = file.string();
-        const std::string basename = file.filename().string();
-        fr.object_key = object_key(session_id, subdir, basename);
-        fr.size_bytes = std::filesystem::file_size(file);
-        fr.sha256 = sha256_hex_file(file);
-
-        const auto body = read_file_bytes(file);
-        const std::string ctype = content_type_for(basename);
-
-        S3PutResult last;
-        for (int attempt = 0; attempt <= cfg_.s3.max_retries; ++attempt) {
-            if (attempt > 0) {
-                const int delay = cfg_.s3.retry_backoff_ms * attempt;
-                std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-            }
-            last = s3_put_object(cfg_.s3.endpoint, cfg_.s3.region, cfg_.s3.bucket,
-                                 fr.object_key, cfg_.s3.access_key, cfg_.s3.secret_key,
-                                 body, ctype, cfg_.s3.path_style);
-            if (last.ok) break;
-            if (last.http_status == 403 || last.http_status == 404) break;
-        }
-
-        fr.etag = last.etag;
-        if (last.ok) {
-            fr.status = "ok";
-        } else {
-            fr.status = "failed";
-            fr.message = last.error;
-            all_ok = false;
-        }
-        report.files.push_back(std::move(fr));
-        std::cerr << "[ego-offline] S3 " << (subdir.empty() ? "" : subdir + "/")
-                  << basename << ": " << (last.ok ? "ok" : last.error) << '\n';
-    }
-    return all_ok ? ExitCode::success : ExitCode::upload_failed;
+    return prefix + "/" + session_id + "/" + relative_path;
 }
 
 ExitCode S3Uploader::upload_session(const std::filesystem::path& session_dir,
@@ -286,9 +222,8 @@ ExitCode S3Uploader::upload_session(const std::filesystem::path& session_dir,
         return ExitCode::upload_blocked;
     }
 
-    const auto offline_files = collect_files(offline_dir);
-    const auto session_files = collect_session_files(session_dir);
-    if (offline_files.empty() && session_files.empty()) {
+    const auto files = collect_files(session_dir, offline_dir, report.session_id);
+    if (files.empty()) {
         report.upload_status = "failed";
         report.blocked_reason = "no files to upload";
         report.write(offline_dir / "upload_report.json");
@@ -296,31 +231,55 @@ ExitCode S3Uploader::upload_session(const std::filesystem::path& session_dir,
     }
 
     if (dry_run) {
-        for (const auto& f : offline_files) {
+        for (const auto& f : files) {
             UploadFileResult fr;
-            fr.local_path = f.string();
-            fr.object_key = object_key(report.session_id, "offline", f.filename().string());
-            fr.status = "dry_run";
-            report.files.push_back(std::move(fr));
-        }
-        for (const auto& f : session_files) {
-            UploadFileResult fr;
-            fr.local_path = f.string();
-            fr.object_key = object_key(report.session_id, "", f.filename().string());
+            fr.local_path = f.path.string();
+            fr.object_key = f.object_key;
             fr.status = "dry_run";
             report.files.push_back(std::move(fr));
         }
         report.upload_status = "skipped";
         report.write(offline_dir / "upload_report.json");
-        std::cerr << "[ego-offline] S3 dry-run: "
-                  << offline_files.size() << " offline + "
-                  << session_files.size() << " session file(s)\n";
+        std::cerr << "[ego-offline] S3 dry-run: " << files.size() << " file(s)\n";
         return ExitCode::success;
     }
 
     bool all_ok = true;
-    upload_file_batch(session_files, report.session_id, "", report, all_ok);
-    upload_file_batch(offline_files, report.session_id, "offline", report, all_ok);
+    for (const auto& file : files) {
+        UploadFileResult fr;
+        fr.local_path = file.path.string();
+        const std::string basename = file.path.filename().string();
+        fr.object_key = file.object_key;
+        fr.size_bytes = std::filesystem::file_size(file.path);
+        fr.sha256 = sha256_hex_file(file.path);
+
+        const auto body = read_file_bytes(file.path);
+        const std::string ctype = content_type_for(basename);
+
+        S3PutResult last;
+        for (int attempt = 0; attempt <= cfg_.s3.max_retries; ++attempt) {
+            if (attempt > 0) {
+                const int delay = cfg_.s3.retry_backoff_ms * attempt;
+                std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+            }
+            last = s3_put_object(cfg_.s3.endpoint, cfg_.s3.region, cfg_.s3.bucket,
+                                 fr.object_key, cfg_.s3.access_key, cfg_.s3.secret_key,
+                                 body, ctype, cfg_.s3.path_style);
+            if (last.ok) break;
+            if (last.http_status == 403 || last.http_status == 404) break;
+        }
+
+        fr.etag = last.etag;
+        if (last.ok) {
+            fr.status = "ok";
+        } else {
+            fr.status = "failed";
+            fr.message = last.error;
+            all_ok = false;
+        }
+        report.files.push_back(std::move(fr));
+        std::cerr << "[ego-offline] S3 " << basename << ": " << (last.ok ? "ok" : last.error) << '\n';
+    }
 
     report.upload_status = all_ok ? "ok" : "failed";
     report.write(offline_dir / "upload_manifest.json");

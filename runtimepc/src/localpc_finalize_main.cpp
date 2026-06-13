@@ -47,6 +47,8 @@ struct Options {
     double board_timeout_s = 45.0;
     std::string board_state_json;
     std::string upload_state_json;
+    std::string board_state_file;
+    std::string upload_state_file;
     std::string test_stand_config = "board_web_localpc";
     std::string vehicle_id = "BOARD-WEB-001";
     std::string requested_session_id;
@@ -210,6 +212,10 @@ Options parse_args(int argc, char** argv) {
             opts.board_state_json = next("--board-state-json");
         } else if (arg == "--upload-state-json") {
             opts.upload_state_json = next("--upload-state-json");
+        } else if (arg == "--board-state-file") {
+            opts.board_state_file = next("--board-state-file");
+        } else if (arg == "--upload-state-file") {
+            opts.upload_state_file = next("--upload-state-file");
         } else if (arg == "--test-stand-config") {
             opts.test_stand_config = next("--test-stand-config");
         } else if (arg == "--vehicle-id") {
@@ -412,6 +418,16 @@ void write_text(const fs::path& path, const std::string& text) {
     out << text;
 }
 
+std::string read_text_file(const fs::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input.good()) {
+        throw std::runtime_error("cannot open file: " + path.string());
+    }
+    std::ostringstream data;
+    data << input.rdbuf();
+    return data.str();
+}
+
 void write_json_passthrough(const fs::path& path, const std::string& json_text) {
     if (trim(json_text).empty()) {
         return;
@@ -572,10 +588,16 @@ int main(int argc, char** argv) {
         const auto t_after_raw = std::chrono::steady_clock::now();
         const fs::path source_path = fetch_source_bin(opts, session_dir);
         const auto t_after_source = std::chrono::steady_clock::now();
+        const std::string board_state_json = !opts.board_state_file.empty()
+            ? read_text_file(expand_home(opts.board_state_file))
+            : opts.board_state_json;
+        const std::string upload_state_json = !opts.upload_state_file.empty()
+            ? read_text_file(expand_home(opts.upload_state_file))
+            : opts.upload_state_json;
 
         write_scenario_metadata(session_dir, opts);
-        write_json_passthrough(session_dir / "board_session_state.json", opts.board_state_json);
-        write_json_passthrough(session_dir / "board_upload_state.json", opts.upload_state_json);
+        write_json_passthrough(session_dir / "board_session_state.json", board_state_json);
+        write_json_passthrough(session_dir / "board_upload_state.json", upload_state_json);
 
         FrameScanResult scan{};
         install_contract_bundle(session_dir, raw_path, session_id, opts, &scan);

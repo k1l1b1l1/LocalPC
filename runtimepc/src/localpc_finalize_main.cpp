@@ -498,7 +498,7 @@ void install_contract_bundle(const fs::path& session_dir, const fs::path& raw_pa
 
 CommandResult run_offline_process(const Options& opts, const fs::path& offline_root, const fs::path& session_dir) {
     std::ostringstream cmd;
-    cmd << shell_quote((offline_root / "run.sh").string())
+    cmd << "bash " << shell_quote((offline_root / "run.sh").string())
         << " process --session-dir " << shell_quote(session_dir.string());
     if (!opts.off_config.empty()) {
         cmd << " --config " << shell_quote(expand_home(opts.off_config));

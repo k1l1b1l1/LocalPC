@@ -8,6 +8,18 @@ SC589 / PC  →  runtimepc  →  offline  →  S3
 
 TCP-клиент `:5001`, пишет сессию в `runtimepc/var/sessions/`. После stop запускает offline.
 
+Для нового контура `board + SourceSiren` в репозитории есть helper:
+
+- `scripts/finalize_board_source.py`
+
+Он запускается удалённо по SSH с operator PC и на самом `LocalPC`:
+
+- забирает `raw` у `mic_web_control`
+- забирает `source.bin` у `SirenSource`
+- собирает `session-*`
+- запускает `offline`
+- дожидается итогового S3 статуса
+
 ## offline
 
 MDF4 + отчёты + S3 из каталога сессии.

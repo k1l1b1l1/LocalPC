@@ -143,17 +143,20 @@ bool ContractTcpClient::Reconnect() {
 
 void ContractTcpClient::Stop() {
     stop_requested_ = true;
-    if (thread_.joinable()) {
-        thread_.join();
-    }
-    if (socket_fd_ != static_cast<SocketHandle>(-1)) {
+    const SocketHandle fd = socket_fd_;
+    if (fd != static_cast<SocketHandle>(-1)) {
 #if defined(_WIN32)
-        closesocket(static_cast<SOCKET>(socket_fd_));
+        shutdown(static_cast<SOCKET>(fd), SD_BOTH);
+        closesocket(static_cast<SOCKET>(fd));
         WSACleanup();
 #else
-        close(static_cast<int>(socket_fd_));
+        shutdown(static_cast<int>(fd), SHUT_RDWR);
+        close(static_cast<int>(fd));
 #endif
         socket_fd_ = static_cast<SocketHandle>(-1);
+    }
+    if (thread_.joinable()) {
+        thread_.join();
     }
     running_ = false;
 }

@@ -41,6 +41,11 @@ public:
                             bool dry_run = false);
 
 private:
+    struct UploadCandidate {
+        std::filesystem::path path;
+        std::string object_key;
+    };
+
     Config cfg_;
 
     std::string read_pipeline_status(const std::filesystem::path& offline_dir) const;
@@ -49,18 +54,12 @@ private:
     bool gate_allowed(const std::filesystem::path& offline_dir,
                       const std::string& pipeline_status,
                       std::string& blocked_reason) const;
-    std::vector<std::filesystem::path> collect_files(
-        const std::filesystem::path& offline_dir) const;
-    std::vector<std::filesystem::path> collect_session_files(
-        const std::filesystem::path& session_dir) const;
+    std::vector<UploadCandidate> collect_files(
+        const std::filesystem::path& session_dir,
+        const std::filesystem::path& offline_dir,
+        const std::string& session_id) const;
     std::string object_key(const std::string& session_id,
-                           const std::string& subdir,
-                           const std::string& basename) const;
-    ExitCode upload_file_batch(const std::vector<std::filesystem::path>& files,
-                               const std::string& session_id,
-                               const std::string& subdir,
-                               UploadReport& report,
-                               bool& all_ok);
+                           const std::string& relative_path) const;
 };
 
 } // namespace ego_offline::upload

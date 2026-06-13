@@ -22,11 +22,19 @@ if [[ ! -x "$ROOT/build/ego-runtime" ]]; then
   exit 1
 fi
 
+if [[ ! -x "$ROOT/build/localpc-finalize" ]]; then
+  echo "error: build/localpc-finalize not found. Run:"
+  echo "  cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j\$(nproc)"
+  exit 1
+fi
+
 pkill -f '[/]bin/ego-runtime' 2>/dev/null || true
 sleep 0.3
 
 cp "$ROOT/build/ego-runtime" "$BIN/ego-runtime"
 chmod +x "$BIN/ego-runtime"
+cp "$ROOT/build/localpc-finalize" "$BIN/localpc-finalize"
+chmod +x "$BIN/localpc-finalize"
 
 cp "$ROOT/config/board.yaml" "$ETC/config.yaml"
 
@@ -67,6 +75,7 @@ echo "done."
 echo "  config:  $ETC/config.yaml"
 echo "  data:    $SESSIONS"
 echo "  binary:  $BIN/ego-runtime"
+echo "  helper:  $BIN/localpc-finalize"
 echo ""
 echo "run:"
 echo "  cd $ROOT && ./run.sh run &"

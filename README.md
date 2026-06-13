@@ -10,15 +10,18 @@ TCP-клиент `:5001`, пишет сессию в `runtimepc/var/sessions/`. 
 
 Для нового контура `board + SourceSiren` в репозитории есть helper:
 
-- `scripts/finalize_board_source.py`
+- `runtimepc/bin/localpc-finalize`
 
-Он запускается удалённо по SSH с operator PC и на самом `LocalPC`:
+Он собирается вместе с `runtimepc` и запускается удалённо по SSH на самом `LocalPC`:
 
 - забирает `raw` у `mic_web_control`
 - забирает `source.bin` у `SirenSource`
 - собирает `session-*`
 - запускает `offline`
 - дожидается итогового S3 статуса
+
+Если `LocalPC` забирает `source.bin` у `SirenSource` по паролю, на Pi нужен
+`sshpass`. Если используется SSH-ключ, `sshpass` не требуется.
 
 ## offline
 

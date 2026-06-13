@@ -95,6 +95,8 @@ endif()
 add_executable(ego-runtime src/main.cpp)
 target_link_libraries(ego-runtime PRIVATE ego_runtime_lib)
 
+add_executable(localpc-finalize src/localpc_finalize_main.cpp)
+
 if(EGO_RUNTIME_BUILD_TESTS)
     add_executable(ego_runtime_tests tests/test_main.cpp)
     target_link_libraries(ego_runtime_tests PRIVATE ego_runtime_lib)
@@ -105,6 +107,6 @@ if(EGO_RUNTIME_BUILD_TESTS)
     add_test(NAME ego_runtime_tests COMMAND ego_runtime_tests)
 endif()
 
-install(TARGETS ego-runtime RUNTIME DESTINATION bin)
+install(TARGETS ego-runtime localpc-finalize RUNTIME DESTINATION bin)
 install(FILES config/board.yaml DESTINATION etc/ego-runtime RENAME config.yaml)
 install(FILES systemd/ego-runtime.service DESTINATION lib/systemd/system)

@@ -19,6 +19,7 @@
 #include "ego_runtime/config.hpp"
 #include "ego_runtime/contract_frame_io.hpp"
 #include "ego_runtime/contract_tcp_client.hpp"
+#include "ego_runtime/nav_history.hpp"
 #include "ego_runtime/nav_provider.hpp"
 #include "ego_runtime/nav_sidecar_writer.hpp"
 #include "ego_runtime/runtime_service.hpp"
@@ -628,6 +629,45 @@ void TestNavProviderTcpNmea() {
     server.Stop();
 }
 
+void TestNavHistoryMaterializeWindow() {
+    const std::filesystem::path runtime_root =
+        std::filesystem::temp_directory_path() / "ego_runtime_nav_history_root";
+    const std::filesystem::path session_dir =
+        std::filesystem::temp_directory_path() / "ego_runtime_nav_history_session";
+    std::error_code ec;
+    std::filesystem::remove_all(runtime_root, ec);
+    std::filesystem::remove_all(session_dir, ec);
+    std::filesystem::create_directories(runtime_root / "var" / "nav", ec);
+    std::filesystem::create_directories(session_dir, ec);
+
+    const std::filesystem::path history_path =
+        runtime_root / "var" / "nav" / "ego_nav_history.jsonl";
+    {
+        std::ofstream out(history_path);
+        out << "{\"ts_ns\":1000,\"lat_deg\":55.0,\"lon_deg\":37.0,\"fix_quality\":1}\n";
+        out << "{\"ts_ns\":2000,\"lat_deg\":55.1,\"lon_deg\":37.1,\"fix_quality\":1}\n";
+        out << "{\"ts_ns\":3000,\"lat_deg\":55.2,\"lon_deg\":37.2,\"fix_quality\":1}\n";
+        out << "{\"broken\":true}\n";
+    }
+
+    const auto result = ego_runtime::MaterializeNavHistoryWindow(
+        runtime_root.string(), session_dir.string(), "ego_nav.jsonl", 1500U, 2500U);
+    Require(result.history_available, "nav history must be available");
+    Require(result.copied_samples == 1U, "expected one copied nav sample");
+    Require(result.skipped_lines == 1U, "expected one skipped invalid history line");
+    Require(!result.sidecar_path.empty(), "sidecar path must be set");
+
+    std::ifstream input(result.sidecar_path);
+    Require(input.good(), "materialized nav sidecar missing");
+    std::string line;
+    std::getline(input, line);
+    Require(line.find("\"ts_ns\":2000") != std::string::npos,
+            "materialized nav sidecar must contain selected sample");
+
+    std::filesystem::remove_all(runtime_root, ec);
+    std::filesystem::remove_all(session_dir, ec);
+}
+
 }  // namespace
 
 int main() {
@@ -640,6 +680,7 @@ int main() {
         TestFileIngestKeepsSessionEnded();
         TestNavSidecarWriter();
         TestNavProviderTcpNmea();
+        TestNavHistoryMaterializeWindow();
         std::cout << "All ego_runtime tests passed\n";
         return 0;
     } catch (const std::exception& ex) {

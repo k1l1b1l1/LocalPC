@@ -538,6 +538,7 @@ bool RuntimeService::StartDaemon() {
     if (nav_provider_) {
         nav_provider_->Start();
     }
+    OpenNavHistoryWriter();
 
     if (!sync_file_mode_) {
         writer_thread_ = std::thread([this]() { WriterLoop(); });
@@ -546,6 +547,10 @@ bool RuntimeService::StartDaemon() {
         reconnect_thread_ = std::thread([this]() { DataLinkWatchdogLoop(); });
         nav_sidecar_stop_ = false;
         nav_sidecar_thread_ = std::thread([this]() { NavSidecarLoop(); });
+        nav_history_stop_ = false;
+        if (nav_history_writer_) {
+            nav_history_thread_ = std::thread([this]() { NavHistoryLoop(); });
+        }
     }
     return true;
 }
@@ -565,11 +570,15 @@ void RuntimeService::StopDaemon() {
     stop_threads_ = true;
     reconnect_watchdog_stop_ = true;
     nav_sidecar_stop_ = true;
+    nav_history_stop_ = true;
     if (reconnect_thread_.joinable()) {
         reconnect_thread_.join();
     }
     if (nav_sidecar_thread_.joinable()) {
         nav_sidecar_thread_.join();
+    }
+    if (nav_history_thread_.joinable()) {
+        nav_history_thread_.join();
     }
     if (control_server_) {
         control_server_->Stop();
@@ -592,6 +601,7 @@ void RuntimeService::StopDaemon() {
         nav_provider_->Stop();
     }
     CloseNavSidecarWriter();
+    CloseNavHistoryWriter();
     if (writer_thread_.joinable()) {
         writer_thread_.join();
     }
@@ -761,6 +771,27 @@ void RuntimeService::NavSidecarLoop() {
     }
 }
 
+void RuntimeService::NavHistoryLoop() {
+    std::uint64_t last_written_sample_id = 0U;
+    while (!nav_history_stop_.load()) {
+        if (nav_provider_ && nav_history_writer_) {
+            NavSnapshot snapshot{};
+            if (nav_provider_->GetSnapshot(&snapshot) &&
+                snapshot.sample_id > 0U &&
+                snapshot.sample_id != last_written_sample_id) {
+                const std::uint64_t ts_ns = UtcNowNs();
+                if (nav_history_writer_->Write(snapshot, ts_ns)) {
+                    last_written_sample_id = snapshot.sample_id;
+                    nav_history_samples_written_ =
+                        nav_history_writer_->SamplesWritten();
+                    nav_history_path_ = nav_history_writer_->Path();
+                }
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+}
+
 void RuntimeService::OpenNavSidecarWriter(const std::string& session_dir) {
     if (sync_file_mode_ || !config_.input_file.empty() ||
         !config_.nav_fallback_enabled || session_dir.empty()) {
@@ -789,6 +820,38 @@ void RuntimeService::CloseNavSidecarWriter() {
     if (nav_sidecar_writer_) {
         nav_sidecar_writer_->Close();
         nav_sidecar_writer_.reset();
+    }
+}
+
+void RuntimeService::OpenNavHistoryWriter() {
+    if (!nav_provider_ || !config_.nav_fallback_enabled ||
+        config_.nav_mode != "tcp_nmea") {
+        nav_history_path_.clear();
+        nav_history_samples_written_ = 0U;
+        nav_history_writer_.reset();
+        return;
+    }
+    nav_history_writer_ = std::make_unique<NavSidecarWriter>(config_);
+    const std::string history_path = ResolveNavHistoryPath(config_);
+    if (!nav_history_writer_->OpenPath(history_path)) {
+        nav_history_writer_.reset();
+        nav_history_path_.clear();
+        nav_history_samples_written_ = 0U;
+        return;
+    }
+    nav_history_path_ = nav_history_writer_->Path();
+    nav_history_samples_written_ = nav_history_writer_->SamplesWritten();
+}
+
+void RuntimeService::CloseNavHistoryWriter() {
+    nav_history_samples_written_ =
+        nav_history_writer_ ? nav_history_writer_->SamplesWritten()
+                            : nav_history_samples_written_;
+    nav_history_path_ =
+        nav_history_writer_ ? nav_history_writer_->Path() : nav_history_path_;
+    if (nav_history_writer_) {
+        nav_history_writer_->Close();
+        nav_history_writer_.reset();
     }
 }
 
@@ -863,6 +926,9 @@ void RuntimeService::WriteRuntimeReport() const {
          << JsonEscape(nav_provider_ ? nav_provider_->Status() : std::string("disabled")) << "\",\n";
     json << "  \"nav_sidecar_path\": \"" << JsonEscape(nav_sidecar_path_) << "\",\n";
     json << "  \"nav_samples_written\": " << nav_samples_written_ << ",\n";
+    json << "  \"nav_history_path\": \"" << JsonEscape(nav_history_path_) << "\",\n";
+    json << "  \"nav_history_samples_written\": "
+         << nav_history_samples_written_ << ",\n";
     json << "  \"reject_by_reason\": {\n";
     bool first = true;
     for (const auto& entry : m.reject_by_reason) {
@@ -1061,6 +1127,8 @@ std::string RuntimeService::BuildDiagnosticsText() const {
     out << "nav_status=" << (nav_provider_ ? nav_provider_->Status() : std::string("disabled")) << "\n";
     out << "nav_sidecar_path=" << nav_sidecar_path_ << "\n";
     out << "nav_samples_written=" << nav_samples_written_ << "\n";
+    out << "nav_history_path=" << nav_history_path_ << "\n";
+    out << "nav_history_samples_written=" << nav_history_samples_written_ << "\n";
     if (!sessions_.SessionDir().empty()) {
         out << "session_dir=" << sessions_.SessionDir() << "\n";
     }

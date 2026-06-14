@@ -74,6 +74,7 @@ add_library(ego_runtime_lib STATIC
     src/contract_tcp_client.cpp
     src/control_ipc.cpp
     src/error_log.cpp
+    src/nav_history.cpp
     src/nav_provider.cpp
     src/nav_sidecar_writer.cpp
     src/runtime_service.cpp
@@ -97,7 +98,8 @@ endif()
 add_executable(ego-runtime src/main.cpp)
 target_link_libraries(ego-runtime PRIVATE ego_runtime_lib)
 
-add_executable(localpc-finalize src/localpc_finalize_main.cpp)
+add_executable(localpc-finalize src/localpc_finalize_main.cpp src/nav_history.cpp)
+target_include_directories(localpc-finalize PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 if(EGO_RUNTIME_BUILD_TESTS)
     add_executable(ego_runtime_tests tests/test_main.cpp)

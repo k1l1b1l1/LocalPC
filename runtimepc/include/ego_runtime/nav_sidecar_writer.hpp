@@ -16,6 +16,7 @@ public:
     ~NavSidecarWriter();
 
     bool Open(const std::string& session_dir);
+    bool OpenPath(const std::string& path);
     void Close();
     bool Write(const NavSnapshot& snapshot, std::uint64_t ts_ns);
 

@@ -42,6 +42,60 @@ chmod +x runtimepc/install.sh offline/install.sh runtimepc/run.sh offline/run.sh
 ./scripts/install-pi.sh
 ```
 
+## Wi-Fi autoconnect
+
+If Pi must always come back to the stand Wi-Fi after disconnect/reboot, configure
+OS-level Wi-Fi autoconnect once on the device:
+
+```bash
+cd ~/LocalPC
+chmod +x scripts/setup-wifi.sh
+sudo ./scripts/setup-wifi.sh --ssid 'YOUR_WIFI_SSID' --psk 'YOUR_WIFI_PASSWORD' --hostname LocalPC
+```
+
+For fixed stand addressing:
+
+```bash
+sudo ./scripts/setup-wifi.sh \
+  --ssid 'YOUR_WIFI_SSID' \
+  --psk 'YOUR_WIFI_PASSWORD' \
+  --hostname LocalPC \
+  --static-ip 192.168.1.111/24 \
+  --gateway 192.168.1.1 \
+  --dns 192.168.1.1,8.8.8.8
+```
+
+Recovery notes: see `WIFI_RECOVERY.md`.
+
+## Tailscale reconnect
+
+Wi-Fi reconnect and Tailscale reconnect are separate layers. After Tailscale is
+installed and the Pi has been authorized once, enable the watchdog:
+
+```bash
+cd ~/LocalPC
+chmod +x scripts/setup-tailscale-watchdog.sh
+sudo ./scripts/setup-tailscale-watchdog.sh --hostname localpc
+```
+
+Check:
+
+```bash
+systemctl status tailscaled tailscale-reconnect.timer
+journalctl -u tailscale-reconnect.service -n 50 --no-pager
+tailscale status
+```
+
+If `tailscale status --json` shows `BackendState=NeedsLogin`, run one manual
+authorization on the Pi:
+
+```bash
+sudo tailscale up --hostname localpc
+```
+
+Then the watchdog will handle normal reconnects after network/power
+interruptions. Details: see `TAILSCALE_RECOVERY.md`.
+
 Или по отдельности:
 
 ```bash
@@ -69,14 +123,14 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
 
 ```bash
 cd ~/LocalPC/runtimepc
-./run.sh run &          # демон
+./run.sh status         # systemd-демон должен быть already running
 ./run.sh start          # запись
 ./run.sh stop           # стоп → finalize → offline (detached) → S3
 ```
 
 После `./run.sh stop` runtime **синхронно** завершает сессию и запускает `ego-offline process` на Pi; загрузка в S3 идёт в фоне на устройстве (GUI на PC не ждёт S3).
 
-Autostart (опционально):
+Autostart (штатный режим):
 
 ```bash
 sudo cp var/ego-runtime.service /etc/systemd/system/

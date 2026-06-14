@@ -40,6 +40,15 @@ NavSidecarWriter::~NavSidecarWriter() {
 }
 
 bool NavSidecarWriter::Open(const std::string& session_dir) {
+    if (session_dir.empty() || config_.nav_sidecar_filename.empty()) {
+        return false;
+    }
+    const std::filesystem::path path =
+        std::filesystem::path(session_dir) / config_.nav_sidecar_filename;
+    return OpenPath(path.string());
+}
+
+bool NavSidecarWriter::OpenPath(const std::string& path_text) {
     std::lock_guard<std::mutex> lock(mu_);
     if (file_ != nullptr) {
         (void)FlushLocked(true);
@@ -48,12 +57,11 @@ bool NavSidecarWriter::Open(const std::string& session_dir) {
     }
     path_.clear();
 
-    if (session_dir.empty() || config_.nav_sidecar_filename.empty()) {
+    if (path_text.empty()) {
         return false;
     }
 
-    const std::filesystem::path path =
-        std::filesystem::path(session_dir) / config_.nav_sidecar_filename;
+    const std::filesystem::path path(path_text);
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
     file_ = std::fopen(path.string().c_str(), "ab");

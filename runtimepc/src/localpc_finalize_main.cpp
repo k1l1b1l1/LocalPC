@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
@@ -6,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <random>
 #include <sstream>
@@ -13,6 +15,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "ego_runtime/nav_history.hpp"
 
 namespace fs = std::filesystem;
 
@@ -336,7 +340,13 @@ std::string runtime_dir_shell(const std::string& path) {
 fs::path create_session_dir(const fs::path& sessions_root, const std::string& requested_session_id, std::string* effective_session_id) {
     std::string session_id = requested_session_id.empty() ? make_session_id() : requested_session_id;
     fs::path dir = sessions_root / session_id;
-    if (fs::exists(dir)) {
+    const bool reusable_existing =
+        !requested_session_id.empty() &&
+        fs::exists(dir) &&
+        !fs::exists(dir / "ego.bin") &&
+        !fs::exists(dir / "localpc_finalize_report.json") &&
+        !fs::exists(dir / "offline" / "session_report.json");
+    if (fs::exists(dir) && !reusable_existing) {
         session_id = make_session_id();
         dir = sessions_root / session_id;
     }
@@ -512,9 +522,9 @@ CommandResult run_offline_process(const Options& opts, const fs::path& offline_r
     return run_command_capture(cmd.str());
 }
 
-std::string extract_json_string(const std::string& raw, const std::string& key) {
+std::string extract_json_string(const std::string& raw, const std::string& key, const std::size_t start_at) {
     const std::string marker = "\"" + key + "\"";
-    const auto pos = raw.find(marker);
+    const auto pos = raw.find(marker, start_at);
     if (pos == std::string::npos) {
         return {};
     }
@@ -541,6 +551,124 @@ std::string extract_json_string(const std::string& raw, const std::string& key) 
         out.push_back(ch);
     }
     return {};
+}
+
+std::string extract_json_string(const std::string& raw, const std::string& key) {
+    return extract_json_string(raw, key, 0U);
+}
+
+std::uint64_t parse_utc_iso8601_to_ns(const std::string& text) {
+    if (text.size() < 19U) {
+        return 0U;
+    }
+
+    std::tm tm{};
+    std::istringstream input(text.substr(0U, 19U));
+    input >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S");
+    if (input.fail()) {
+        return 0U;
+    }
+
+    std::uint64_t fractional_ns = 0U;
+    std::size_t cursor = 19U;
+    if (cursor < text.size() && text[cursor] == '.') {
+        ++cursor;
+        std::size_t frac_end = cursor;
+        while (frac_end < text.size() && std::isdigit(static_cast<unsigned char>(text[frac_end])) != 0) {
+            ++frac_end;
+        }
+        std::string frac = text.substr(cursor, frac_end - cursor);
+        if (frac.size() > 9U) {
+            frac.resize(9U);
+        }
+        while (frac.size() < 9U) {
+            frac.push_back('0');
+        }
+        try {
+            fractional_ns = static_cast<std::uint64_t>(std::stoull(frac));
+        } catch (...) {
+            return 0U;
+        }
+    }
+
+#if defined(_WIN32)
+    const std::time_t seconds = _mkgmtime(&tm);
+#else
+    const std::time_t seconds = timegm(&tm);
+#endif
+    if (seconds < 0) {
+        return 0U;
+    }
+    return static_cast<std::uint64_t>(seconds) * 1'000'000'000ULL + fractional_ns;
+}
+
+bool try_extract_board_utc_window(const std::string& board_state_json,
+                                  const std::string& board_record_name,
+                                  std::uint64_t* start_ns,
+                                  std::uint64_t* stop_ns) {
+    if (start_ns == nullptr || stop_ns == nullptr || board_state_json.empty() ||
+        board_record_name.empty()) {
+        return false;
+    }
+    const auto anchor = board_state_json.find(board_record_name);
+    if (anchor == std::string::npos) {
+        return false;
+    }
+    const std::size_t window_start = anchor > 4096U ? anchor - 4096U : 0U;
+    const auto started = extract_json_string(board_state_json, "started_utc", window_start);
+    const auto stopped = extract_json_string(board_state_json, "stopped_utc", window_start);
+    if (started.empty() || stopped.empty()) {
+        return false;
+    }
+    *start_ns = parse_utc_iso8601_to_ns(started);
+    *stop_ns = parse_utc_iso8601_to_ns(stopped);
+    return *start_ns > 0U && *stop_ns >= *start_ns;
+}
+
+ego_runtime::NavHistoryMaterializeResult materialize_ego_nav_sidecar(
+    const Options& opts,
+    const fs::path& session_dir,
+    const FrameScanResult& scan,
+    const std::string& board_state_json,
+    std::string* source_tag) {
+    if (source_tag != nullptr) {
+        *source_tag = "missing";
+    }
+
+    auto result = ego_runtime::MaterializeNavHistoryWindow(
+        opts.runtime_root,
+        session_dir.string(),
+        "ego_nav.jsonl",
+        scan.first_ts_ns,
+        scan.last_ts_ns);
+    if (result.used_existing_sidecar) {
+        if (source_tag != nullptr) {
+            *source_tag = "existing";
+        }
+        return result;
+    }
+    if (result.copied_samples > 0U) {
+        if (source_tag != nullptr) {
+            *source_tag = "history_raw_window";
+        }
+        return result;
+    }
+
+    std::uint64_t board_start_ns = 0U;
+    std::uint64_t board_stop_ns = 0U;
+    if (try_extract_board_utc_window(board_state_json, opts.board_record_name,
+                                     &board_start_ns, &board_stop_ns)) {
+        result = ego_runtime::MaterializeNavHistoryWindow(
+            opts.runtime_root,
+            session_dir.string(),
+            "ego_nav.jsonl",
+            board_start_ns,
+            board_stop_ns);
+        if (result.copied_samples > 0U && source_tag != nullptr) {
+            *source_tag = "history_board_window";
+        }
+    }
+    return result;
 }
 
 std::string read_upload_status(const fs::path& session_dir) {
@@ -602,6 +730,9 @@ int main(int argc, char** argv) {
         FrameScanResult scan{};
         install_contract_bundle(session_dir, raw_path, session_id, opts, &scan);
         const auto t_after_bundle = std::chrono::steady_clock::now();
+        std::string ego_nav_materialize_source;
+        const auto nav_sidecar = materialize_ego_nav_sidecar(
+            opts, session_dir, scan, board_state_json, &ego_nav_materialize_source);
 
         const auto offline_result = run_offline_process(opts, offline_root, session_dir);
         const auto t_after_offline = std::chrono::steady_clock::now();
@@ -624,6 +755,9 @@ int main(int argc, char** argv) {
                << "  \"source_path\": \"" << json_escape(source_path.string()) << "\",\n"
                << "  \"ego_nav_sidecar_path\": \""
                << json_escape(fs::exists(ego_nav_sidecar_path) ? ego_nav_sidecar_path.string() : std::string()) << "\",\n"
+               << "  \"ego_nav_history_path\": \"" << json_escape(nav_sidecar.history_path) << "\",\n"
+               << "  \"ego_nav_sidecar_samples\": " << nav_sidecar.copied_samples << ",\n"
+               << "  \"ego_nav_sidecar_source\": \"" << json_escape(ego_nav_materialize_source) << "\",\n"
                << "  \"ego_frames\": " << scan.frames << ",\n"
                << "  \"off_process_rc\": " << offline_result.rc << ",\n"
                << "  \"s3_status\": \"" << json_escape(s3_status) << "\",\n"

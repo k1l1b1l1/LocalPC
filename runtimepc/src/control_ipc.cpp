@@ -18,6 +18,7 @@
 #else
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -121,6 +122,7 @@ bool ControlServer::Start() {
     if (bind(static_cast<NativeSocket>(listen_fd_), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
         return false;
     }
+    chmod(path.c_str(), 0666);
     if (listen(static_cast<NativeSocket>(listen_fd_), 8) != 0) {
         return false;
     }

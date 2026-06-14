@@ -71,6 +71,8 @@ void apply_yaml_line(Config& cfg, const std::string& full_key, const std::string
         else if (full_key == "mdf4.output_filename")      cfg.mdf4.output_filename = val;
         else if (full_key == "scene.segment_min_duration_ms")        cfg.scene.segment_min_duration_ms = parse_int(val);
         else if (full_key == "scene.classify_unknown_when_degraded")  cfg.scene.classify_unknown_when_degraded = parse_bool(val);
+        else if (full_key == "fallback.ego_nav_sidecar_enabled")     cfg.fallback.ego_nav_sidecar_enabled = parse_bool(val);
+        else if (full_key == "fallback.ego_nav_sidecar_filename")    cfg.fallback.ego_nav_sidecar_filename = val;
         else if (full_key == "debug.keep_intermediate")   cfg.debug.keep_intermediate = parse_bool(val);
         else if (full_key == "debug.intermediate_dir")    cfg.debug.intermediate_dir = val;
         else if (full_key == "s3.enabled")                cfg.s3.enabled = parse_bool(val);
@@ -176,6 +178,9 @@ void Config::resolve_s3_credentials() {
             "source.bin",
             "ego.index",
         };
+        if (!fallback.ego_nav_sidecar_filename.empty()) {
+            s3.session_include_files.push_back(fallback.ego_nav_sidecar_filename);
+        }
     }
 
     if (s3.access_key.empty()) {

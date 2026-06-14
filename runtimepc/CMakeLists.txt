@@ -74,6 +74,8 @@ add_library(ego_runtime_lib STATIC
     src/contract_tcp_client.cpp
     src/control_ipc.cpp
     src/error_log.cpp
+    src/nav_provider.cpp
+    src/nav_sidecar_writer.cpp
     src/runtime_service.cpp
     src/session_checkpoint.cpp
     src/session_integrity.cpp

@@ -23,7 +23,10 @@ using ego::protocol::v1::FramePayloadType;
 
 }  // namespace
 
-RuntimeService::RuntimeService(RuntimeConfig config) : config_(std::move(config)), sessions_(config_) {}
+RuntimeService::RuntimeService(RuntimeConfig config)
+    : config_(std::move(config)),
+      sessions_(config_),
+      nav_provider_(std::make_unique<NavProvider>(config_)) {}
 
 RuntimeService::~RuntimeService() {
     StopDaemon();
@@ -100,8 +103,11 @@ RuntimeErrorCode RuntimeService::StartLocalRecording(const ScenarioMetadata& sce
     last_ts_ns_ = 0U;
     seq_initialized_ = false;
     last_seq_ = 0U;
+    latest_contract_ts_ns_.store(0U);
+    latest_contract_ts_valid_.store(false);
     rate_start_ = std::chrono::steady_clock::now();
     recording_start_ = rate_start_;
+    OpenNavSidecarWriter(dir);
     return RuntimeErrorCode::kOk;
 }
 
@@ -155,11 +161,14 @@ RuntimeErrorCode RuntimeService::StartBoardSession(const ScenarioMetadata& scena
     last_ts_ns_ = 0U;
     seq_initialized_ = false;
     last_seq_ = 0U;
+    latest_contract_ts_ns_.store(0U);
+    latest_contract_ts_valid_.store(false);
     rate_start_ = std::chrono::steady_clock::now();
     recording_start_ = rate_start_;
     cold_data_session_ = true;
     packets_since_checkpoint_ = 0U;
     SetDataLinkState(DataLinkState::kUp);
+    OpenNavSidecarWriter(dir);
 
     if (!EnsureDataClient()) {
         error_log_->Write(LogLevel::kError, "data connect failed after control start");
@@ -167,6 +176,7 @@ RuntimeErrorCode RuntimeService::StartBoardSession(const ScenarioMetadata& scena
         writer_->Close();
         writer_.reset();
         buffer_.reset();
+        CloseNavSidecarWriter();
         error_log_.reset();
         sessions_.MarkStopped("data_connect_failed");
         control_client_.reset();
@@ -240,6 +250,8 @@ RuntimeErrorCode RuntimeService::ResumeBoardSession(const std::string& session_d
     last_seq_ = checkpoint.last_seq;
     last_ts_ns_ = checkpoint.last_ts_ns;
     seen_ts_ = checkpoint.last_ts_ns > 0U;
+    latest_contract_ts_ns_.store(checkpoint.last_ts_ns);
+    latest_contract_ts_valid_.store(checkpoint.last_ts_ns > 0U);
     seq_initialized_ = checkpoint.last_seq > 0U;
     cold_data_session_ = false;
     packets_since_checkpoint_ = 0U;
@@ -293,6 +305,7 @@ RuntimeErrorCode RuntimeService::ResumeBoardSession(const std::string& session_d
 
     rate_start_ = std::chrono::steady_clock::now();
     recording_start_ = rate_start_;
+    OpenNavSidecarWriter(session_dir);
     WriteCheckpoint(session_dir, SessionCheckpoint{
         checkpoint.session_id, board_session_id_, last_seq_, last_ts_ns_, checkpoint.chunk_id,
         DataLinkStateToString(data_link_state_.load()), UtcNowIso8601()});
@@ -522,11 +535,17 @@ bool RuntimeService::StartDaemon() {
     });
     storage_->Start();
 
+    if (nav_provider_) {
+        nav_provider_->Start();
+    }
+
     if (!sync_file_mode_) {
         writer_thread_ = std::thread([this]() { WriterLoop(); });
         report_thread_ = std::thread([this]() { ReportLoop(); });
         reconnect_watchdog_stop_ = false;
         reconnect_thread_ = std::thread([this]() { DataLinkWatchdogLoop(); });
+        nav_sidecar_stop_ = false;
+        nav_sidecar_thread_ = std::thread([this]() { NavSidecarLoop(); });
     }
     return true;
 }
@@ -545,8 +564,12 @@ bool RuntimeService::StartControlServer() {
 void RuntimeService::StopDaemon() {
     stop_threads_ = true;
     reconnect_watchdog_stop_ = true;
+    nav_sidecar_stop_ = true;
     if (reconnect_thread_.joinable()) {
         reconnect_thread_.join();
+    }
+    if (nav_sidecar_thread_.joinable()) {
+        nav_sidecar_thread_.join();
     }
     if (control_server_) {
         control_server_->Stop();
@@ -565,6 +588,10 @@ void RuntimeService::StopDaemon() {
         storage_->Stop();
         storage_.reset();
     }
+    if (nav_provider_) {
+        nav_provider_->Stop();
+    }
+    CloseNavSidecarWriter();
     if (writer_thread_.joinable()) {
         writer_thread_.join();
     }
@@ -653,6 +680,8 @@ void RuntimeService::OnContractFrame(ContractFrame frame) {
         }
         last_ts_ns_ = header.t0_ns;
         seen_ts_ = true;
+        latest_contract_ts_ns_.store(header.t0_ns);
+        latest_contract_ts_valid_.store(true);
     }
 
     const SessionState state = sessions_.State();
@@ -706,6 +735,63 @@ void RuntimeService::DrainPacketBuffer() {
     }
 }
 
+void RuntimeService::NavSidecarLoop() {
+    std::uint64_t last_written_sample_id = 0U;
+    while (!nav_sidecar_stop_.load()) {
+        {
+            std::lock_guard<std::recursive_mutex> lock(service_mu_);
+            const SessionState state = sessions_.State();
+            if ((state == SessionState::kRecording || state == SessionState::kStopping) &&
+                nav_provider_ && nav_sidecar_writer_ &&
+                latest_contract_ts_valid_.load()) {
+                NavSnapshot snapshot{};
+                if (nav_provider_->GetSnapshot(&snapshot) &&
+                    snapshot.sample_id > 0U &&
+                    snapshot.sample_id != last_written_sample_id) {
+                    const std::uint64_t ts_ns = latest_contract_ts_ns_.load();
+                    if (nav_sidecar_writer_->Write(snapshot, ts_ns)) {
+                        last_written_sample_id = snapshot.sample_id;
+                        nav_samples_written_ = nav_sidecar_writer_->SamplesWritten();
+                        nav_sidecar_path_ = nav_sidecar_writer_->Path();
+                    }
+                }
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+}
+
+void RuntimeService::OpenNavSidecarWriter(const std::string& session_dir) {
+    if (sync_file_mode_ || !config_.input_file.empty() ||
+        !config_.nav_fallback_enabled || session_dir.empty()) {
+        nav_sidecar_path_.clear();
+        nav_samples_written_ = 0U;
+        nav_sidecar_writer_.reset();
+        return;
+    }
+    nav_sidecar_writer_ = std::make_unique<NavSidecarWriter>(config_);
+    if (!nav_sidecar_writer_->Open(session_dir)) {
+        nav_sidecar_writer_.reset();
+        nav_sidecar_path_.clear();
+        nav_samples_written_ = 0U;
+        if (error_log_) {
+            error_log_->Write(LogLevel::kWarning, "failed to open nav sidecar writer");
+        }
+        return;
+    }
+    nav_sidecar_path_ = nav_sidecar_writer_->Path();
+    nav_samples_written_ = 0U;
+}
+
+void RuntimeService::CloseNavSidecarWriter() {
+    nav_samples_written_ = nav_sidecar_writer_ ? nav_sidecar_writer_->SamplesWritten() : nav_samples_written_;
+    nav_sidecar_path_ = nav_sidecar_writer_ ? nav_sidecar_writer_->Path() : nav_sidecar_path_;
+    if (nav_sidecar_writer_) {
+        nav_sidecar_writer_->Close();
+        nav_sidecar_writer_.reset();
+    }
+}
+
 void RuntimeService::WriterLoop() {
     while (!stop_threads_.load()) {
         const SessionState state = sessions_.State();
@@ -749,6 +835,7 @@ void RuntimeService::ReportLoop() {
 }
 
 void RuntimeService::WriteRuntimeReport() const {
+    std::lock_guard<std::recursive_mutex> lock(service_mu_);
     if (sessions_.SessionDir().empty()) {
         return;
     }
@@ -771,6 +858,11 @@ void RuntimeService::WriteRuntimeReport() const {
     json << "  \"write_mbps\": " << m.write_mbps << ",\n";
     json << "  \"health\": \"" << JsonEscape(m.health) << "\",\n";
     json << "  \"adsp_status\": \"" << JsonEscape(m.adsp_status) << "\",\n";
+    json << "  \"nav_mode\": \"" << JsonEscape(config_.nav_mode) << "\",\n";
+    json << "  \"nav_status\": \""
+         << JsonEscape(nav_provider_ ? nav_provider_->Status() : std::string("disabled")) << "\",\n";
+    json << "  \"nav_sidecar_path\": \"" << JsonEscape(nav_sidecar_path_) << "\",\n";
+    json << "  \"nav_samples_written\": " << nav_samples_written_ << ",\n";
     json << "  \"reject_by_reason\": {\n";
     bool first = true;
     for (const auto& entry : m.reject_by_reason) {
@@ -800,6 +892,7 @@ void RuntimeService::FinalizeActiveSession(const std::string& reason) {
     if (writer_) {
         writer_->Close();
     }
+    CloseNavSidecarWriter();
     sessions_.MarkStopped(reason);
     sessions_.WriteSessionMetadata();
     const IntegrityReport integrity = CheckSessionIntegrity(sessions_.SessionDir(), config_.max_payload_bytes);
@@ -942,6 +1035,7 @@ std::string RuntimeService::BuildRuntimeReportJson() const {
 }
 
 std::string RuntimeService::BuildDiagnosticsText() const {
+    std::lock_guard<std::recursive_mutex> lock(service_mu_);
     const RuntimeStatus st = Status();
     std::ostringstream out;
     out << "session_state=" << SessionStateToString(st.session_state) << "\n";
@@ -963,6 +1057,10 @@ std::string RuntimeService::BuildDiagnosticsText() const {
     out << "reconnect_count=" << st.metrics.reconnect_count << "\n";
     out << "data_link_down_sec=" << st.metrics.data_link_down_sec << "\n";
     out << "backfill_gap_frames=" << st.metrics.backfill_gap_frames << "\n";
+    out << "nav_mode=" << config_.nav_mode << "\n";
+    out << "nav_status=" << (nav_provider_ ? nav_provider_->Status() : std::string("disabled")) << "\n";
+    out << "nav_sidecar_path=" << nav_sidecar_path_ << "\n";
+    out << "nav_samples_written=" << nav_samples_written_ << "\n";
     if (!sessions_.SessionDir().empty()) {
         out << "session_dir=" << sessions_.SessionDir() << "\n";
     }

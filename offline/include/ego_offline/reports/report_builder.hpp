@@ -34,6 +34,7 @@ struct SessionReport {
     struct InputPaths {
         std::string session_dir;
         std::string ego_manifest;
+        std::string ego_nav_sidecar;
         std::string source_bin;
         std::string config;
     } input_paths;
@@ -61,6 +62,9 @@ struct SessionReport {
         std::map<std::string, double> stages_s;
     } timing;
 
+    std::string ego_gps_source = "missing";
+    std::uint64_t ego_gps_points = 0;
+    bool ego_gps_fallback_used = false;
     std::vector<std::string> errors;
 
     std::string to_json() const;
@@ -106,6 +110,9 @@ struct DataQualityReport {
         double mean_hdop_source    = 0.0;
     } navigation;
 
+    std::string ego_gps_source = "missing";
+    std::uint64_t ego_gps_points = 0;
+    bool ego_gps_fallback_used = false;
     std::vector<std::string> flags;
 
     std::string to_json() const;
@@ -156,11 +163,17 @@ public:
         const SessionReport::InputPaths& inputs,
         const SessionReport::Outputs&  outputs,
         const SessionReport::Timing&   timing,
+        const std::string&             ego_gps_source,
+        std::uint64_t                  ego_gps_points,
+        bool                           ego_gps_fallback_used,
         const std::vector<std::string>& errors) const;
 
     DataQualityReport build_data_quality_report(
         const ValidationReport&        val_rpt,
-        const std::string&             session_id) const;
+        const std::string&             session_id,
+        const std::string&             ego_gps_source,
+        std::uint64_t                  ego_gps_points,
+        bool                           ego_gps_fallback_used) const;
 
     EventsReport build_events_report(
         const std::vector<SceneEvent>&   events,

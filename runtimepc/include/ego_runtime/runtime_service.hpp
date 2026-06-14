@@ -16,6 +16,8 @@
 #include "ego_runtime/diagnostics.hpp"
 #include "ego_runtime/ego_raw_writer.hpp"
 #include "ego_runtime/error_log.hpp"
+#include "ego_runtime/nav_provider.hpp"
+#include "ego_runtime/nav_sidecar_writer.hpp"
 #include "ego_runtime/packet_buffer.hpp"
 #include "ego_runtime/session_checkpoint.hpp"
 #include "ego_runtime/session_integrity.hpp"
@@ -90,6 +92,9 @@ private:
     void DataLinkWatchdogLoop();
     void FinalizeActiveSession(const std::string& reason);
     void DrainPacketBuffer();
+    void NavSidecarLoop();
+    void OpenNavSidecarWriter(const std::string& session_dir);
+    void CloseNavSidecarWriter();
     void WriteRuntimeReport() const;
     void WriteFinalSummary(const IntegrityReport& integrity, const std::string& reason) const;
     void TrackContractSeq(std::uint64_t seq);
@@ -102,6 +107,8 @@ private:
     RuntimeConfig config_;
     SessionManager sessions_;
     std::unique_ptr<ErrorLog> error_log_;
+    std::unique_ptr<NavProvider> nav_provider_;
+    std::unique_ptr<NavSidecarWriter> nav_sidecar_writer_;
     std::unique_ptr<PacketBuffer> buffer_;
     std::unique_ptr<ChunkWriter> writer_;
     std::unique_ptr<ContractTcpClient> contract_client_;
@@ -113,9 +120,11 @@ private:
     std::thread writer_thread_{};
     std::thread report_thread_{};
     std::thread reconnect_thread_{};
+    std::thread nav_sidecar_thread_{};
     std::atomic<bool> daemon_running_{false};
     std::atomic<bool> stop_threads_{false};
     std::atomic<bool> reconnect_watchdog_stop_{false};
+    std::atomic<bool> nav_sidecar_stop_{false};
     bool sync_file_mode_ = false;
     bool cold_data_session_ = true;
     std::chrono::steady_clock::time_point rate_start_{};
@@ -124,6 +133,8 @@ private:
     std::atomic<bool> finalize_in_progress_{false};
     std::uint64_t last_ts_ns_ = 0U;
     bool seen_ts_ = false;
+    std::atomic<std::uint64_t> latest_contract_ts_ns_{0U};
+    std::atomic<bool> latest_contract_ts_valid_{false};
     bool seq_initialized_ = false;
     std::uint64_t last_seq_ = 0U;
     std::uint64_t packets_since_checkpoint_ = 0U;
@@ -136,6 +147,8 @@ private:
     bool session_started_seen_ = false;
     bool config_snapshot_seen_ = false;
     bool session_ended_seen_ = false;
+    std::string nav_sidecar_path_;
+    std::uint64_t nav_samples_written_ = 0U;
 };
 
 }  // namespace ego_runtime

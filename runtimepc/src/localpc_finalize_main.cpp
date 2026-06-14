@@ -607,6 +607,7 @@ int main(int argc, char** argv) {
         const auto t_after_offline = std::chrono::steady_clock::now();
         const std::string upload_status = read_upload_status(session_dir);
         const std::string s3_status = s3_status_from(offline_result.rc, upload_status);
+        const fs::path ego_nav_sidecar_path = session_dir / "ego_nav.jsonl";
 
         auto elapsed = [](auto a, auto b) {
             return std::chrono::duration<double>(b - a).count();
@@ -621,6 +622,8 @@ int main(int argc, char** argv) {
                << "  \"board_record_name\": \"" << json_escape(opts.board_record_name) << "\",\n"
                << "  \"raw_path\": \"" << json_escape(raw_path.string()) << "\",\n"
                << "  \"source_path\": \"" << json_escape(source_path.string()) << "\",\n"
+               << "  \"ego_nav_sidecar_path\": \""
+               << json_escape(fs::exists(ego_nav_sidecar_path) ? ego_nav_sidecar_path.string() : std::string()) << "\",\n"
                << "  \"ego_frames\": " << scan.frames << ",\n"
                << "  \"off_process_rc\": " << offline_result.rc << ",\n"
                << "  \"s3_status\": \"" << json_escape(s3_status) << "\",\n"

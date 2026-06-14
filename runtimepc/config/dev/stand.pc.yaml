@@ -28,6 +28,14 @@ diagnostics:
   report_interval_sec: 5
   time_gap_threshold_ms: 100
 
+nav:
+  mode: "disabled"
+  host: "127.0.0.1"
+  port: 3000
+  stale_timeout_ms: 5000
+  sidecar_filename: "ego_nav.jsonl"
+  fallback_enabled: false
+
 offline:
   enabled: true
   binary: "../offline/build/ego-offline"

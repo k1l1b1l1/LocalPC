@@ -1,9 +1,12 @@
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <atomic>
@@ -16,6 +19,8 @@
 #include "ego_runtime/config.hpp"
 #include "ego_runtime/contract_frame_io.hpp"
 #include "ego_runtime/contract_tcp_client.hpp"
+#include "ego_runtime/nav_provider.hpp"
+#include "ego_runtime/nav_sidecar_writer.hpp"
 #include "ego_runtime/runtime_service.hpp"
 #include "ego_runtime/session_integrity.hpp"
 #include "ego_runtime/session_checkpoint.hpp"
@@ -55,6 +60,18 @@ std::vector<std::uint8_t> BuildContractFrame(std::uint64_t seq,
         std::memcpy(frame.data() + sizeof(header), payload.data(), payload.size());
     }
     return frame;
+}
+
+std::string BuildNmeaSentence(const std::string& body) {
+    std::uint8_t checksum = 0U;
+    for (const char ch : body) {
+        checksum ^= static_cast<std::uint8_t>(ch);
+    }
+    std::ostringstream out;
+    out << '$' << body << '*'
+        << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
+        << static_cast<int>(checksum);
+    return out.str();
 }
 
 void TestContractFrameValidation() {
@@ -267,6 +284,116 @@ struct MockReplayServer {
     }
 };
 
+struct MockNmeaServer {
+#if defined(_WIN32)
+    SOCKET listen_fd = INVALID_SOCKET;
+#else
+    int listen_fd = -1;
+#endif
+    std::uint16_t port = 0U;
+    std::atomic<bool> stop{false};
+    std::thread accept_thread{};
+
+    ~MockNmeaServer() { Stop(); }
+
+    bool Start() {
+#if defined(_WIN32)
+        WSADATA wsa{};
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+            return false;
+        }
+        listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listen_fd == INVALID_SOCKET) {
+            return false;
+        }
+#else
+        listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (listen_fd < 0) {
+            return false;
+        }
+#endif
+        int yes = 1;
+        setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR,
+                   reinterpret_cast<const char*>(&yes), sizeof(yes));
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+        if (bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+            return false;
+        }
+        socklen_t len = sizeof(addr);
+        if (getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
+            return false;
+        }
+        port = ntohs(addr.sin_port);
+        if (listen(listen_fd, 1) != 0) {
+            return false;
+        }
+        accept_thread = std::thread([this]() { AcceptLoop(); });
+        return true;
+    }
+
+    void Stop() {
+        stop = true;
+#if defined(_WIN32)
+        if (listen_fd != INVALID_SOCKET) {
+            closesocket(listen_fd);
+            listen_fd = INVALID_SOCKET;
+        }
+#else
+        if (listen_fd >= 0) {
+            close(listen_fd);
+            listen_fd = -1;
+        }
+#endif
+        if (accept_thread.joinable()) {
+            accept_thread.join();
+        }
+    }
+
+    void AcceptLoop() {
+        while (!stop.load()) {
+#if defined(_WIN32)
+            const SOCKET client = accept(listen_fd, nullptr, nullptr);
+            if (client == INVALID_SOCKET) {
+                break;
+            }
+#else
+            const int client = accept(listen_fd, nullptr, nullptr);
+            if (client < 0) {
+                break;
+            }
+#endif
+            std::thread([client]() {
+                const std::string payload =
+                    BuildNmeaSentence("GPRMC,120000.00,A,5545.0720,N,03737.1040,E,0.50,161.3,140624,,,A") + "\r\n" +
+                    BuildNmeaSentence("GPGGA,120000.00,5545.0720,N,03737.1040,E,1,07,2.1,170.0,M,0.0,M,,") + "\r\n";
+                std::size_t sent = 0U;
+                while (sent < payload.size()) {
+#if defined(_WIN32)
+                    const int rc = send(client, payload.data() + sent, static_cast<int>(payload.size() - sent), 0);
+#else
+                    const ssize_t rc = send(client, payload.data() + sent, payload.size() - sent, 0);
+#endif
+                    if (rc <= 0) {
+                        break;
+                    }
+                    sent += static_cast<std::size_t>(rc);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+#if defined(_WIN32)
+                shutdown(client, SD_BOTH);
+                closesocket(client);
+#else
+                shutdown(client, SHUT_RDWR);
+                close(client);
+#endif
+            }).detach();
+        }
+    }
+};
+
 void TestIT04ReplayReconnectDedup() {
     MockReplayServer server;
     Require(server.Start(), "mock replay server start failed");
@@ -430,6 +557,77 @@ void TestFileIngestKeepsSessionEnded() {
     std::filesystem::remove_all(data_root, ec);
 }
 
+void TestNavSidecarWriter() {
+    const std::string session_dir =
+        (std::filesystem::temp_directory_path() / "ego_runtime_nav_sidecar").string();
+    std::error_code ec;
+    std::filesystem::remove_all(session_dir, ec);
+    std::filesystem::create_directories(session_dir, ec);
+
+    ego_runtime::RuntimeConfig cfg{};
+    cfg.nav_sidecar_filename = "ego_nav.jsonl";
+    ego_runtime::NavSidecarWriter writer(cfg);
+    Require(writer.Open(session_dir), "nav sidecar writer open failed");
+
+    ego_runtime::NavSnapshot snapshot{};
+    snapshot.sample_id = 1U;
+    snapshot.latitude_deg = 55.7512;
+    snapshot.longitude_deg = 37.6184;
+    snapshot.altitude_m = 170.0;
+    snapshot.speed_mps = 0.5f;
+    snapshot.heading_deg = 161.3f;
+    snapshot.fix_quality = 1U;
+    snapshot.satellites = 7U;
+    snapshot.hdop = 2.1f;
+    snapshot.source = "local_m2_tcp";
+    Require(writer.Write(snapshot, 123456789U), "nav sidecar write failed");
+    writer.Close();
+
+    const std::filesystem::path sidecar_path = std::filesystem::path(session_dir) / "ego_nav.jsonl";
+    std::ifstream input(sidecar_path);
+    Require(input.good(), "nav sidecar file missing");
+    std::string line;
+    std::getline(input, line);
+    Require(line.find("\"ts_ns\":123456789") != std::string::npos, "sidecar ts missing");
+    Require(line.find("\"source\":\"local_m2_tcp\"") != std::string::npos, "sidecar source missing");
+
+    std::filesystem::remove_all(session_dir, ec);
+}
+
+void TestNavProviderTcpNmea() {
+    MockNmeaServer server;
+    Require(server.Start(), "mock NMEA server start failed");
+
+    ego_runtime::RuntimeConfig cfg{};
+    cfg.nav_mode = "tcp_nmea";
+    cfg.nav_host = "127.0.0.1";
+    cfg.nav_port = server.port;
+    cfg.nav_stale_timeout_ms = 5000U;
+    cfg.nav_fallback_enabled = true;
+
+    ego_runtime::NavProvider provider(cfg);
+    Require(provider.Start(), "nav provider start failed");
+
+    ego_runtime::NavSnapshot snapshot{};
+    bool received = false;
+    for (int i = 0; i < 40; ++i) {
+        if (provider.GetSnapshot(&snapshot)) {
+            received = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    Require(received, "nav provider did not receive TCP NMEA snapshot");
+    Require(snapshot.fix_quality == 1U, "unexpected GNSS fix quality");
+    Require(snapshot.satellites == 7U, "unexpected satellites count");
+    Require(std::abs(snapshot.latitude_deg - 55.7512) < 0.001, "unexpected latitude");
+    Require(std::abs(snapshot.longitude_deg - 37.6184) < 0.001, "unexpected longitude");
+    Require(provider.Status().find("live:127.0.0.1:") == 0, "unexpected nav status");
+
+    provider.Stop();
+    server.Stop();
+}
+
 }  // namespace
 
 int main() {
@@ -440,6 +638,8 @@ int main() {
         TestIT04ReplayReconnectDedup();
         TestFileIngestContract();
         TestFileIngestKeepsSessionEnded();
+        TestNavSidecarWriter();
+        TestNavProviderTcpNmea();
         std::cout << "All ego_runtime tests passed\n";
         return 0;
     } catch (const std::exception& ex) {

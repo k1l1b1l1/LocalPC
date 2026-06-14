@@ -36,6 +36,14 @@ diagnostics:
   report_interval_sec: 10
   time_gap_threshold_ms: 50
 
+nav:
+  mode: "disabled"
+  host: "127.0.0.1"
+  port: 3000
+  stale_timeout_ms: 5000
+  sidecar_filename: "ego_nav.jsonl"
+  fallback_enabled: false
+
 # После stop/finalize сессии — автоматически запускает ego-offline process (+ S3).
 offline:
   enabled: true

@@ -12,6 +12,10 @@ mdf4:
   include_audio: true
   output_filename: session.mf4
 
+fallback:
+  ego_nav_sidecar_enabled: true
+  ego_nav_sidecar_filename: "ego_nav.jsonl"
+
 s3:
   enabled: true
   require_pipeline_success: false

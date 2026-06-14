@@ -10,13 +10,20 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # nlohmann/json — prefer installed package, fall back to FetchContent
 find_package(nlohmann_json 3.9 QUIET)
 if (NOT nlohmann_json_FOUND)
-    include(FetchContent)
-    FetchContent_Declare(
-        nlohmann_json
-        URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
-        URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
-    )
-    FetchContent_MakeAvailable(nlohmann_json)
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/nlohmann/json.hpp")
+        add_library(nlohmann_json_vendor INTERFACE)
+        target_include_directories(nlohmann_json_vendor INTERFACE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include")
+        add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json_vendor)
+    else()
+        include(FetchContent)
+        FetchContent_Declare(
+            nlohmann_json
+            URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+            URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+        )
+        FetchContent_MakeAvailable(nlohmann_json)
+    endif()
 endif()
 
 # ── Include paths ─────────────────────────────────────────────────────────────
@@ -37,6 +44,7 @@ target_link_libraries(ego_offline_config PUBLIC ego_offline_proto)
 # ── load ──────────────────────────────────────────────────────────────────────
 add_library(ego_offline_load STATIC
     src/load/ego_log_reader.cpp
+    src/load/ego_nav_sidecar_reader.cpp
     src/load/source_log_reader.cpp
     src/load/metadata_loader.cpp
 )
@@ -176,6 +184,11 @@ add_executable(test_config_yaml tests/test_config_yaml.cpp)
 target_include_directories(test_config_yaml PRIVATE include)
 target_link_libraries(test_config_yaml PRIVATE ego_offline_config)
 add_test(NAME config_yaml COMMAND test_config_yaml WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(test_ego_nav_sidecar_reader tests/test_ego_nav_sidecar_reader.cpp)
+target_include_directories(test_ego_nav_sidecar_reader PRIVATE include)
+target_link_libraries(test_ego_nav_sidecar_reader PRIVATE ego_offline_load)
+add_test(NAME ego_nav_sidecar_reader COMMAND test_ego_nav_sidecar_reader WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(test_mdf4_writer tests/test_mdf4_writer.cpp)
 target_include_directories(test_mdf4_writer PRIVATE include)

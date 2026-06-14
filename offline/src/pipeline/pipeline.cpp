@@ -3,6 +3,7 @@
 #include "ego_offline/checksum.hpp"
 #include "ego_offline/ego_contract_protocol.hpp"
 #include "ego_offline/load/ego_log_reader.hpp"
+#include "ego_offline/load/ego_nav_sidecar_reader.hpp"
 #include "ego_offline/load/source_log_reader.hpp"
 #include "ego_offline/load/metadata_loader.hpp"
 #include "ego_offline/parse/binary_parser.hpp"
@@ -400,6 +401,33 @@ ExitCode Pipeline::run_full(const RunOptions& opts) {
         return ExitCode::success;
     }
 
+    t1 = Clock::now();
+    const auto ego_nav_sidecar_path = opts.session_dir / cfg_.fallback.ego_nav_sidecar_filename;
+    std::string ego_gps_source = ego_streams.gps.empty() ? "missing" : "upstream_sc589";
+    bool ego_gps_fallback_used = false;
+
+    if (ego_streams.gps.empty() && cfg_.fallback.ego_nav_sidecar_enabled) {
+        try {
+            const auto sidecar = load::ReadEgoNavSidecar(ego_nav_sidecar_path);
+            if (!sidecar.points.empty()) {
+                ego_streams.gps = sidecar.points;
+                ego_gps_source = "local_m2_fallback";
+                ego_gps_fallback_used = true;
+            }
+            if (sidecar.invalid_lines > 0U) {
+                std::cerr << "[ego-offline] ego_nav sidecar ignored "
+                          << sidecar.invalid_lines << " invalid lines\n";
+            }
+        } catch (const std::exception& e) {
+            errors.push_back(std::string("ego_nav_sidecar: ") + e.what());
+            std::cerr << "[ego-offline] " << errors.back() << '\n';
+        }
+    }
+    const std::uint64_t ego_gps_points = static_cast<std::uint64_t>(ego_streams.gps.size());
+    timing.stages_s["ego_gps_select"] = elapsed_s(t1);
+    std::cerr << "[ego-offline] ego_gps_source=" << ego_gps_source
+              << " points=" << ego_gps_points << '\n';
+
     // ─────────────────────────────────────────────────────────────────────────
     // STAGE 5: Sync
     // ─────────────────────────────────────────────────────────────────────────
@@ -506,6 +534,7 @@ ExitCode Pipeline::run_full(const RunOptions& opts) {
     reports::SessionReport::InputPaths inputs;
     inputs.session_dir  = opts.session_dir.string();
     inputs.ego_manifest = (opts.session_dir / "ego_manifest.json").string();
+    inputs.ego_nav_sidecar = std::filesystem::exists(ego_nav_sidecar_path) ? ego_nav_sidecar_path.string() : "";
     inputs.source_bin   = src_bin.string();
     inputs.config       = opts.config_path.string();
 
@@ -521,10 +550,13 @@ ExitCode Pipeline::run_full(const RunOptions& opts) {
 
     auto sess_rpt = rpt_builder.build_session_report(
         val_rpt, sync_rpt, meta, meta.session.session_id,
-        inputs, outputs_info, timing, errors);
+        inputs, outputs_info, timing,
+        ego_gps_source, ego_gps_points, ego_gps_fallback_used, errors);
     sess_rpt.write(out / "session_report.json");
 
-    auto dq_rpt = rpt_builder.build_data_quality_report(val_rpt, meta.session.session_id);
+    auto dq_rpt = rpt_builder.build_data_quality_report(
+        val_rpt, meta.session.session_id,
+        ego_gps_source, ego_gps_points, ego_gps_fallback_used);
     dq_rpt.write(out / "data_quality_report.json");
 
     auto ev_rpt = rpt_builder.build_events_report(

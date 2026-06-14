@@ -24,6 +24,14 @@ int main() {
         std::cerr << "FAIL: fail_on_sync_error not false\n";
         return 1;
     }
+    if (!cfg.fallback.ego_nav_sidecar_enabled) {
+        std::cerr << "FAIL: fallback sidecar not enabled\n";
+        return 1;
+    }
+    if (cfg.fallback.ego_nav_sidecar_filename != "ego_nav.jsonl") {
+        std::cerr << "FAIL: fallback filename=" << cfg.fallback.ego_nav_sidecar_filename << '\n';
+        return 1;
+    }
 
     std::cout << "[PASS] stand.pc.yaml parsed: min_valid_duration_s="
               << cfg.validation.min_valid_duration_s << '\n';

@@ -38,6 +38,18 @@ void ParseScalar(const std::string& key, const std::string& value, RuntimeConfig
         cfg.data_port = static_cast<std::uint16_t>(std::stoul(value));
     } else if (key == "network.max_payload_bytes") {
         cfg.max_payload_bytes = static_cast<std::uint32_t>(std::stoul(value));
+    } else if (key == "nav.mode") {
+        cfg.nav_mode = Unquote(value);
+    } else if (key == "nav.host") {
+        cfg.nav_host = Unquote(value);
+    } else if (key == "nav.port") {
+        cfg.nav_port = static_cast<std::uint16_t>(std::stoul(value));
+    } else if (key == "nav.stale_timeout_ms") {
+        cfg.nav_stale_timeout_ms = static_cast<std::uint32_t>(std::stoul(value));
+    } else if (key == "nav.sidecar_filename") {
+        cfg.nav_sidecar_filename = Unquote(value);
+    } else if (key == "nav.fallback_enabled") {
+        cfg.nav_fallback_enabled = (value == "true" || value == "1");
     } else if (key == "ipc.port") {
         cfg.control_port = static_cast<std::uint16_t>(std::stoul(value));
     } else if (key == "control.port") {
@@ -141,6 +153,15 @@ void ApplyEnvOverrides(RuntimeConfig& config) {
     }
     if (const char* v = std::getenv("EGO_RUNTIME_EGO_HOST")) {
         config.ego_host = v;
+    }
+    if (const char* v = std::getenv("EGO_RUNTIME_NAV_MODE")) {
+        config.nav_mode = v;
+    }
+    if (const char* v = std::getenv("EGO_RUNTIME_NAV_HOST")) {
+        config.nav_host = v;
+    }
+    if (const char* v = std::getenv("EGO_RUNTIME_NAV_PORT")) {
+        config.nav_port = static_cast<std::uint16_t>(std::stoul(v));
     }
     if (const char* v = std::getenv("EGO_RUNTIME_VEHICLE_ID")) {
         config.vehicle_id = v;

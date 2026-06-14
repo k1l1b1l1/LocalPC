@@ -41,6 +41,11 @@ struct Config {
         bool classify_unknown_when_degraded  = true;
     } scene;
 
+    struct Fallback {
+        bool        ego_nav_sidecar_enabled  = true;
+        std::string ego_nav_sidecar_filename = "ego_nav.jsonl";
+    } fallback;
+
     struct Debug {
         bool        keep_intermediate = false;
         std::string intermediate_dir  = "stages";

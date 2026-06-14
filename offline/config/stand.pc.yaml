@@ -35,6 +35,10 @@ scene:
   segment_min_duration_ms: 200      # мягче для коротких стенд-тестов
   classify_unknown_when_degraded: true
 
+fallback:
+  ego_nav_sidecar_enabled: true
+  ego_nav_sidecar_filename: "ego_nav.jsonl"
+
 debug:
   keep_intermediate: false
   intermediate_dir: stages

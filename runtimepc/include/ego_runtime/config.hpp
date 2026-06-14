@@ -44,6 +44,13 @@ struct RuntimeConfig {
     std::uint64_t packet_buffer_max_bytes = 512ULL * 1024ULL * 1024ULL;
     std::uint32_t max_payload_bytes = 65536U;
 
+    std::string nav_mode = "disabled";
+    std::string nav_host = "127.0.0.1";
+    std::uint16_t nav_port = 3000U;
+    std::uint32_t nav_stale_timeout_ms = 5000U;
+    std::string nav_sidecar_filename = "ego_nav.jsonl";
+    bool nav_fallback_enabled = false;
+
     std::string scenario_id;
     std::string scenario_name;
     std::string operator_name;

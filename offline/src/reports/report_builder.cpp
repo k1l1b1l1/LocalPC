@@ -54,6 +54,9 @@ SessionReport ReportBuilder::build_session_report(
     const SessionReport::InputPaths& inputs,
     const SessionReport::Outputs&  outputs,
     const SessionReport::Timing&   timing,
+    const std::string&             ego_gps_source,
+    const std::uint64_t            ego_gps_points,
+    const bool                     ego_gps_fallback_used,
     const std::vector<std::string>& errors) const
 {
     SessionReport rpt;
@@ -63,6 +66,9 @@ SessionReport ReportBuilder::build_session_report(
     rpt.input_paths              = inputs;
     rpt.outputs                  = outputs;
     rpt.timing                   = timing;
+    rpt.ego_gps_source           = ego_gps_source;
+    rpt.ego_gps_points           = ego_gps_points;
+    rpt.ego_gps_fallback_used    = ego_gps_fallback_used;
     rpt.errors                   = errors;
 
     rpt.validation_integrity = [&] {
@@ -104,12 +110,18 @@ SessionReport ReportBuilder::build_session_report(
 
 DataQualityReport ReportBuilder::build_data_quality_report(
     const ValidationReport& val_rpt,
-    const std::string& session_id) const
+    const std::string& session_id,
+    const std::string& ego_gps_source,
+    const std::uint64_t ego_gps_points,
+    const bool ego_gps_fallback_used) const
 {
     DataQualityReport rpt;
     rpt.offline_pipeline_version = cfg_.offline_pipeline_version;
     rpt.session_id               = session_id;
     rpt.generated_at_utc         = utc_now_iso8601();
+    rpt.ego_gps_source           = ego_gps_source;
+    rpt.ego_gps_points           = ego_gps_points;
+    rpt.ego_gps_fallback_used    = ego_gps_fallback_used;
 
     // Stream scores
     auto mk = [](const StreamValidation& sv, uint64_t sample_count, double rate, bool present) {
@@ -132,6 +144,7 @@ DataQualityReport ReportBuilder::build_data_quality_report(
     rpt.streams["gps_ego"]      = mk(val_rpt.ego, val_rpt.ego.packets_valid, 1.0,     val_rpt.ego.file_ok);
     rpt.streams["gps_source"]   = mk(val_rpt.source, val_rpt.source.packets_valid, 1.0, val_rpt.source.file_ok);
     rpt.streams["source_events"] = mk(val_rpt.source, val_rpt.source.packets_valid, 0.0, val_rpt.source.file_ok);
+    rpt.streams["gps_ego"].notes = ego_gps_source;
 
     // Valid time
     double total_dur = (val_rpt.ego.t_last_ns - val_rpt.ego.t_first_ns) / 1e9;
@@ -162,6 +175,7 @@ DataQualityReport ReportBuilder::build_data_quality_report(
     if (val_rpt.source.packets_crc_failed > 0) rpt.flags.push_back("source_crc_errors");
     if (!val_rpt.source.file_ok)              rpt.flags.push_back("source_missing");
     if (rpt.valid_time.valid_fraction < 0.5)  rpt.flags.push_back("low_valid_fraction");
+    if (ego_gps_fallback_used)                rpt.flags.push_back("ego_gps_local_m2_fallback");
 
     return rpt;
 }
@@ -225,6 +239,7 @@ std::string SessionReport::to_json() const {
     root.object("input_paths", [this](ObjectBuilder& b) {
         b.field("session_dir",   json::str(input_paths.session_dir))
          .field("ego_manifest",  json::str(input_paths.ego_manifest))
+         .field("ego_nav_sidecar", json::str(input_paths.ego_nav_sidecar))
          .field("source_bin",    json::str(input_paths.source_bin))
          .field("config",        json::str(input_paths.config));
     });
@@ -246,6 +261,10 @@ std::string SessionReport::to_json() const {
          .field("stopped_at_utc", json::str(metadata.stopped_at_utc))
          .field("duration_s",    json::num(metadata.duration_s, 3));
     });
+
+    root.field("ego_gps_source", json::str(ego_gps_source))
+        .field("ego_gps_points", json::num(static_cast<int64_t>(ego_gps_points)))
+        .field("ego_gps_fallback_used", json::boolean(ego_gps_fallback_used));
 
     root.object("timing", [this](ObjectBuilder& b) {
         b.field("total_wall_s", json::num(timing.total_wall_s, 3));
@@ -280,7 +299,10 @@ std::string DataQualityReport::to_json() const {
         .field("session_id",               str(session_id))
         .field("generated_at_utc",         str(generated_at_utc))
         .field("overall_score",            num(overall_score, 4))
-        .field("usable_for_training",      boolean(usable_for_training));
+        .field("usable_for_training",      boolean(usable_for_training))
+        .field("ego_gps_source",           str(ego_gps_source))
+        .field("ego_gps_points",           num(static_cast<int64_t>(ego_gps_points)))
+        .field("ego_gps_fallback_used",    boolean(ego_gps_fallback_used));
 
     root.object("streams", [this](ObjectBuilder& sb) {
         for (const auto& [name, q] : streams) {

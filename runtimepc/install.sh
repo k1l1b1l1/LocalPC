@@ -5,8 +5,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$ROOT/.." && pwd)"
 OFFLINE_ROOT="$REPO_ROOT/offline"
-SERVICE_USER="${SUDO_USER:-$(id -un)}"
-SERVICE_GROUP="$(id -gn "$SERVICE_USER" 2>/dev/null || id -gn)"
 
 BIN="$ROOT/bin"
 ETC="$ROOT/etc"
@@ -57,8 +55,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=${SERVICE_USER}
-Group=${SERVICE_GROUP}
 WorkingDirectory=${ROOT}
 Environment=EGO_RUNTIME_ROOT=${ROOT}
 ExecStart=${BIN}/ego-runtime run --config ${ETC}/config.yaml

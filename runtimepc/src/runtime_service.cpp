@@ -1020,7 +1020,7 @@ std::string RuntimeService::HandleControlCommand(const std::string& command_line
         return "OK\n\n";
     }
     if (command_line == "STATUS" || command_line == "DIAGNOSTICS" || command_line == "STATS") {
-        return BuildDiagnosticsText() + "\n";
+        return BuildDiagnosticsText() + "\n\n";
     }
     if (command_line.rfind("STOP", 0) == 0) {
         std::string reason = "ipc_stop";

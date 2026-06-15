@@ -1101,7 +1101,6 @@ std::string RuntimeService::BuildRuntimeReportJson() const {
 }
 
 std::string RuntimeService::BuildDiagnosticsText() const {
-    std::lock_guard<std::recursive_mutex> lock(service_mu_);
     const RuntimeStatus st = Status();
     std::ostringstream out;
     out << "session_state=" << SessionStateToString(st.session_state) << "\n";

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -67,6 +68,30 @@ bool FileHasContent(const std::filesystem::path& path) {
            std::filesystem::file_size(path, ec) > 0U;
 }
 
+std::string ExpandHomePath(std::string value) {
+    value = Trim(value);
+    if (value == "~") {
+#if defined(_WIN32)
+        const char* home = std::getenv("USERPROFILE");
+#else
+        const char* home = std::getenv("HOME");
+#endif
+        return home == nullptr ? value : std::string(home);
+    }
+    if (value.rfind("~/", 0) == 0) {
+#if defined(_WIN32)
+        const char* home = std::getenv("USERPROFILE");
+#else
+        const char* home = std::getenv("HOME");
+#endif
+        if (home == nullptr) {
+            return value;
+        }
+        return (std::filesystem::path(home) / value.substr(2U)).string();
+    }
+    return value;
+}
+
 }  // namespace
 
 std::string ResolveNavHistoryPath(const RuntimeConfig& config) {
@@ -81,8 +106,9 @@ std::string ResolveNavHistoryPath(const RuntimeConfig& config) {
 }
 
 std::string ResolveNavHistoryPath(const std::string& runtime_root) {
-    if (!Trim(runtime_root).empty()) {
-        return (std::filesystem::path(Trim(runtime_root)) / "var" / "nav" /
+    const std::string expanded_root = ExpandHomePath(runtime_root);
+    if (!expanded_root.empty()) {
+        return (std::filesystem::path(expanded_root) / "var" / "nav" /
                 "ego_nav_history.jsonl")
             .string();
     }

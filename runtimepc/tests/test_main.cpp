@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -668,6 +669,49 @@ void TestNavHistoryMaterializeWindow() {
     std::filesystem::remove_all(session_dir, ec);
 }
 
+void TestNavHistoryMaterializeWindowExpandsHome() {
+    const std::filesystem::path runtime_root =
+        std::filesystem::temp_directory_path() / "ego_runtime_nav_history_home_root";
+    const std::filesystem::path session_dir =
+        std::filesystem::temp_directory_path() / "ego_runtime_nav_history_home_session";
+    std::error_code ec;
+    std::filesystem::remove_all(runtime_root, ec);
+    std::filesystem::remove_all(session_dir, ec);
+    std::filesystem::create_directories(runtime_root / "var" / "nav", ec);
+    std::filesystem::create_directories(session_dir, ec);
+
+    const std::filesystem::path history_path =
+        runtime_root / "var" / "nav" / "ego_nav_history.jsonl";
+    {
+        std::ofstream out(history_path);
+        out << "{\"ts_ns\":4000,\"lat_deg\":55.4,\"lon_deg\":37.4,\"fix_quality\":1}\n";
+    }
+
+#if defined(_WIN32)
+    _putenv_s("USERPROFILE", runtime_root.string().c_str());
+    const std::string runtime_root_arg = "~/LocalPC/runtimepc";
+#else
+    setenv("HOME", runtime_root.string().c_str(), 1);
+    const std::string runtime_root_arg = "~/LocalPC/runtimepc";
+#endif
+    const std::filesystem::path expanded_runtime_root =
+        runtime_root / "LocalPC" / "runtimepc";
+    std::filesystem::create_directories(expanded_runtime_root / "var" / "nav", ec);
+    std::filesystem::copy_file(
+        history_path,
+        expanded_runtime_root / "var" / "nav" / "ego_nav_history.jsonl",
+        std::filesystem::copy_options::overwrite_existing,
+        ec);
+
+    const auto result = ego_runtime::MaterializeNavHistoryWindow(
+        runtime_root_arg, session_dir.string(), "ego_nav.jsonl", 3500U, 4500U);
+    Require(result.history_available, "expanded home nav history must be available");
+    Require(result.copied_samples == 1U, "expected one copied nav sample with home expansion");
+
+    std::filesystem::remove_all(runtime_root, ec);
+    std::filesystem::remove_all(session_dir, ec);
+}
+
 }  // namespace
 
 int main() {
@@ -681,6 +725,7 @@ int main() {
         TestNavSidecarWriter();
         TestNavProviderTcpNmea();
         TestNavHistoryMaterializeWindow();
+        TestNavHistoryMaterializeWindowExpandsHome();
         std::cout << "All ego_runtime tests passed\n";
         return 0;
     } catch (const std::exception& ex) {

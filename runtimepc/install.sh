@@ -5,6 +5,28 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$ROOT/.." && pwd)"
 OFFLINE_ROOT="$REPO_ROOT/offline"
+SERVICE_USER=""
+SERVICE_GROUP=""
+
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+  SERVICE_USER="${SUDO_USER}"
+  SERVICE_GROUP="$(id -gn "$SERVICE_USER" 2>/dev/null || true)"
+fi
+
+if [[ -z "$SERVICE_USER" ]]; then
+  if command -v stat >/dev/null 2>&1; then
+    SERVICE_USER="$(stat -c '%U' "$ROOT" 2>/dev/null || true)"
+  fi
+fi
+if [[ -z "$SERVICE_USER" || "$SERVICE_USER" == "UNKNOWN" ]]; then
+  SERVICE_USER="$(id -un)"
+fi
+if [[ -z "$SERVICE_GROUP" ]] && command -v stat >/dev/null 2>&1; then
+  SERVICE_GROUP="$(stat -c '%G' "$ROOT" 2>/dev/null || true)"
+fi
+if [[ -z "$SERVICE_GROUP" || "$SERVICE_GROUP" == "UNKNOWN" ]]; then
+  SERVICE_GROUP="$(id -gn "$SERVICE_USER" 2>/dev/null || id -gn)"
+fi
 
 BIN="$ROOT/bin"
 ETC="$ROOT/etc"
@@ -46,22 +68,24 @@ sed -i "s|^  s3_config:.*|  s3_config: \"${OFFLINE_ROOT}/etc/s3.local.yaml\"|" "
 
 chmod +x "$ROOT/run.sh" 2>/dev/null || true
 
-# systemd unit with local paths (optional)
+# systemd unit with local paths and repo owner identity (recommended)
 cat > "$VAR/ego-runtime.service" <<EOF
 [Unit]
 Description=EGO runtime recorder (Raspberry Pi 5)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_GROUP}
 WorkingDirectory=${ROOT}
 Environment=EGO_RUNTIME_ROOT=${ROOT}
 ExecStart=${BIN}/ego-runtime run --config ${ETC}/config.yaml
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=3
 
 [Install]
 WantedBy=multi-user.target
@@ -76,6 +100,7 @@ echo "  config:  $ETC/config.yaml"
 echo "  data:    $SESSIONS"
 echo "  binary:  $BIN/ego-runtime"
 echo "  helper:  $BIN/localpc-finalize"
+echo "  service: ${SERVICE_USER}:${SERVICE_GROUP}"
 echo ""
 echo "daemon control:"
 echo "  cd $ROOT && ./run.sh status"
